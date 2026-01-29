@@ -30,7 +30,6 @@ Route::post('/patient-details/update', [PatientController::class, 'updatePatient
 Route::post('/patient-details/update-name', [PatientController::class, 'updatePatientName']);
 Route::post('/patient-name/update', [PatientController::class, 'updatePatientName']);
 Route::delete('/patient-details/delete/{glNum}', [PatientController::class, 'deleteLetter']);
-
 //BudgetController
 Route::post('/create-yearly-budget', [BudgetController::class, 'createYearlyBudget']);
 Route::post('/add-supplementary-bonus', [BudgetController::class, 'addSupplementaryBonus']);

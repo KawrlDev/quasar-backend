@@ -499,7 +499,7 @@ class PatientController extends Controller
     {
         // Get all unique patients with their most recent GL record
         $patients = DB::table('patient_list')
-            ->leftJoin('patient_history', function($join) {
+            ->leftJoin('patient_history', function ($join) {
                 $join->on('patient_list.patient_id', '=', 'patient_history.patient_id')
                     ->whereRaw('patient_history.gl_no = (
                         SELECT MAX(ph2.gl_no) 
@@ -529,7 +529,7 @@ class PatientController extends Controller
         $today = Carbon::today();
 
         // Add eligibility information to each patient
-        $patientsWithEligibility = $patients->map(function($patient) use ($today) {
+        $patientsWithEligibility = $patients->map(function ($patient) use ($today) {
             if (!$patient->last_issued_at) {
                 // No previous GL records - eligible
                 return array_merge((array)$patient, [
