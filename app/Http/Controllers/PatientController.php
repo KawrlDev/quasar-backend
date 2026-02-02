@@ -302,9 +302,47 @@ class PatientController extends Controller
             // Get the GL record (transaction)
             $history = PatientHistory::where('gl_no', $glNum)->firstOrFail();
 
-            // Handle the 3 different scenarios based on flags
+            // CASE 1: Update ONLY transaction details (don't touch patient_list)
+            if ($request->has('update_transaction_only') && $request->input('update_transaction_only') == '1') {
+                // Normalize hospital bill
+                $hospitalBillInput = $request->input('hospital_bill');
+                $hospitalBill = (is_null($hospitalBillInput) || $hospitalBillInput === '' ||
+                    strtolower($hospitalBillInput) === 'null' ||
+                    strtolower($hospitalBillInput) === 'n/a')
+                    ? null
+                    : (float) $hospitalBillInput;
+
+                // Update only GL-SPECIFIC details (patient_history)
+                $history->update([
+                    'category'      => $request->input('category'),
+                    'partner'       => $nullify($request->input('partner')),
+                    'hospital_bill' => $hospitalBill,
+                    'issued_amount' => $nullify($request->input('issued_amount')),
+                ]);
+
+                // Handle CLIENT (per-GL)
+                $isChecked = $request->boolean('is_checked');
+
+                if (!$isChecked) {
+                    ClientName::updateOrCreate(
+                        ['gl_no' => $glNum],
+                        [
+                            'lastname'     => $request->input('client_lastname'),
+                            'firstname'    => $request->input('client_firstname'),
+                            'middlename'   => $nullify($request->input('client_middlename')),
+                            'suffix'       => $nullify($request->input('client_suffix')),
+                            'relationship' => $nullify($request->input('relationship')),
+                        ]
+                    );
+                } else {
+                    ClientName::where('gl_no', $glNum)->delete();
+                }
+
+                return response()->json(['success' => true]);
+            }
+
+            // CASE 2: Create new patient
             if ($request->has('force_new_patient') && $request->input('force_new_patient') == '1') {
-                // CREATE NEW PATIENT - create a new patient_list entry
                 $newPatient = PatientList::create([
                     'lastname'      => $request->input('lastname'),
                     'firstname'     => $request->input('firstname'),
@@ -321,11 +359,13 @@ class PatientController extends Controller
 
                 // Update this GL to use the new patient_id
                 $history->patient_id = $newPatient->patient_id;
-            } elseif ($request->has('use_existing_patient_id')) {
-                // USE EXISTING PATIENT - link to an existing patient_id
+            } 
+            // CASE 3: Use existing patient
+            elseif ($request->has('use_existing_patient_id')) {
                 $history->patient_id = $request->input('use_existing_patient_id');
-            } else {
-                // DEFAULT - update the current patient_list record (affects all GLs with this patient_id)
+            } 
+            // CASE 4: Update existing patient (affects all GLs with this patient_id)
+            else {
                 $patient = PatientList::where('patient_id', $history->patient_id)->firstOrFail();
                 $patient->update([
                     'lastname'      => $request->input('lastname'),
@@ -342,7 +382,7 @@ class PatientController extends Controller
                 ]);
             }
 
-            // Normalize hospital bill
+            // For cases 2, 3, 4: Update transaction details too
             $hospitalBillInput = $request->input('hospital_bill');
             $hospitalBill = (is_null($hospitalBillInput) || $hospitalBillInput === '' ||
                 strtolower($hospitalBillInput) === 'null' ||
