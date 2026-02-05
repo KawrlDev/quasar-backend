@@ -142,6 +142,7 @@ class DashboardController extends Controller
             )
             ->whereYear('patient_history.date_issued', $currentYear)
             ->groupBy('patient_list.barangay')
+            ->orderByDesc('totalAmount')
             ->get();
 
         return response()->json($data);

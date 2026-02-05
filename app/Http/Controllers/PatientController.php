@@ -107,110 +107,96 @@ class PatientController extends Controller
     }
 
     public function getPatients()
-    {
-        $patientList = DB::table('patient_list')
-            ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-            ->select('patient_list.lastname', 'patient_list.firstname', 'patient_list.middlename', 'patient_list.suffix', 'patient_history.category', 'patient_history.gl_no', 'patient_history.date_issued')
-            ->orderby('patient_history.gl_no', 'desc')->get();
-        return response()->json($patientList);
-    }
+{
+    $patientList = DB::table('patient_list')
+        ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+        ->select(
+            'patient_list.lastname', 
+            'patient_list.firstname', 
+            'patient_list.middlename', 
+            'patient_list.suffix', 
+            'patient_list.barangay',
+            'patient_history.category', 
+            'patient_history.gl_no', 
+            'patient_history.date_issued'
+        )
+        ->orderby('patient_history.gl_no', 'desc')->get();
+    return response()->json($patientList);
+}
 
-    public function filterByDate(Request $request)
-    {
-        $query = DB::table('patient_history')
-            ->join('patient_list', 'patient_list.patient_id', '=', 'patient_history.patient_id')
-            ->select(
-                'patient_list.lastname',
-                'patient_list.firstname',
-                'patient_list.middlename',
-                'patient_list.suffix',
-                'patient_history.category',
-                'patient_history.gl_no',
-                'patient_history.date_issued'
-            );
+public function search(Request $request)
+{
+    $search = trim($request->query('q'));
 
-        if ($request->filled('date')) {
-            $date = Carbon::createFromFormat('d/m/Y', $request->date)->format('Y-m-d');
-            $query->whereDate('date_issued', $date);
-        }
-
-        if ($request->filled(['from', 'to'])) {
-            $from = Carbon::createFromFormat('d/m/Y', $request->from)->startOfDay();
-            $to   = Carbon::createFromFormat('d/m/Y', $request->to)->endOfDay();
-            $query->whereBetween('date_issued', [$from, $to]);
-        }
-
-        return $query->orderBy('date_issued', 'asc')->get();
-    }
-
-    public function search(Request $request)
-    {
-        $search = trim($request->query('q'));
-
-        if (!$search) {
-            return DB::table('patient_list')
-                ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-                ->select(
-                    'patient_list.lastname',
-                    'patient_list.firstname',
-                    'patient_list.middlename',
-                    'patient_list.suffix',
-                    'patient_history.category',
-                    'patient_history.gl_no',
-                    'patient_history.date_issued'
-                )
-                ->orderBy('patient_history.date_issued', 'desc')
-                ->get();
-        }
-
-        // Remove commas for full-name matching
-        $searchNoComma = str_replace(',', '', $search);
-
+    if (!$search) {
         return DB::table('patient_list')
             ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-            ->where(function ($q) use ($search, $searchNoComma) {
-
-                $q->whereRaw(
-                    "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
-                    [$searchNoComma]
-                )
-
-                    ->orWhereRaw(
-                        "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
-                        ["%{$searchNoComma}%"]
-                    )
-
-                    ->orWhere('patient_list.lastname', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.firstname', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.middlename', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.suffix', 'LIKE', "%{$search}%")
-
-                    ->orWhere('patient_history.category', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_history.gl_no', 'LIKE', "%{$search}%");
-            })
             ->select(
                 'patient_list.lastname',
                 'patient_list.firstname',
                 'patient_list.middlename',
                 'patient_list.suffix',
+                'patient_list.barangay',
                 'patient_history.category',
                 'patient_history.gl_no',
                 'patient_history.date_issued'
             )
-            ->orderByRaw("
+            ->orderBy('patient_history.date_issued', 'desc')
+            ->get();
+    }
+
+    // Remove commas for full-name matching
+    $searchNoComma = str_replace(',', '', $search);
+
+    return DB::table('patient_list')
+        ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+        ->where(function ($q) use ($search, $searchNoComma) {
+
+            $q->whereRaw(
+                "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
+                [$searchNoComma]
+            )
+
+                ->orWhereRaw(
+                    "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
+                    ["%{$searchNoComma}%"]
+                )
+
+                ->orWhere('patient_list.lastname', 'LIKE', "%{$search}%")
+                ->orWhere('patient_list.firstname', 'LIKE', "%{$search}%")
+                ->orWhere('patient_list.middlename', 'LIKE', "%{$search}%")
+                ->orWhere('patient_list.suffix', 'LIKE', "%{$search}%")
+                ->orWhere('patient_list.barangay', 'LIKE', "%{$search}%")
+
+                ->orWhere('patient_history.category', 'LIKE', "%{$search}%")
+                ->orWhere('patient_history.gl_no', 'LIKE', "%{$search}%")
+                ->orWhere('patient_history.date_issued', 'LIKE', "%{$search}%");
+        })
+        ->select(
+            'patient_list.lastname',
+            'patient_list.firstname',
+            'patient_list.middlename',
+            'patient_list.suffix',
+            'patient_list.barangay',
+            'patient_history.category',
+            'patient_history.gl_no',
+            'patient_history.date_issued'
+        )
+        ->orderByRaw("
             CASE
                 WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ? THEN 1
                 WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ? THEN 2
                 WHEN patient_history.category = ? THEN 3
                 WHEN patient_history.gl_no = ? THEN 4
-                ELSE 5
+                WHEN patient_history.date_issued LIKE ? THEN 5
+                ELSE 6
             END
-        ", [$searchNoComma, "%{$searchNoComma}%", $search, $search])
-            ->orderBy('patient_list.lastname')
-            ->orderBy('patient_list.firstname')
-            ->orderBy('patient_history.gl_no', 'desc')
-            ->get();
-    }
+        ", [$searchNoComma, "%{$searchNoComma}%", $search, $search, "%{$search}%"])
+        ->orderBy('patient_list.lastname')
+        ->orderBy('patient_list.firstname')
+        ->orderBy('patient_history.gl_no', 'desc')
+        ->get();
+}
 
     public function getPatientDetails($glNum)
     {
