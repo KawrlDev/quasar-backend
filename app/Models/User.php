@@ -9,7 +9,7 @@ class User extends Authenticatable
 {
     use Notifiable;
 
-    protected $table = 'users'; // your table name
+    protected $table = 'users';
     protected $primaryKey = 'ID';
     public $incrementing = true;
     public $timestamps = false;
@@ -40,5 +40,9 @@ class User extends Authenticatable
     public function getRememberTokenName()
     {
         return 'REMEMBER_TOKEN';
+    }
+    public function setUsernameAttribute($value)
+    {
+        $this->attributes['USERNAME'] = strtoupper($value);
     }
 }

@@ -6,12 +6,20 @@ use App\Models\PatientList;
 use App\Models\PatientDetails;
 use App\Models\ClientName;
 use App\Models\PatientHistory;
+use App\Models\WebsiteSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 class PatientController extends Controller
 {
+    /**
+     * Get the eligibility cooldown period in days from settings
+     */
+    private function getEligibilityCooldownDays()
+    {
+        return WebsiteSettings::where('id', 1)->value('eligibility_cooldown') ?? 90; // Default to 90 days if not set
+    }
 
     private function normalizePhoneNumber($phoneNumber)
     {
@@ -290,11 +298,14 @@ class PatientController extends Controller
             return response()->json(['message' => 'GL number not found'], 404);
         }
 
-        // 2. Compute eligibility date (3 months after date_issued)
-        $eligibilityDate = Carbon::parse($current->date_issued)
-            ->addMonthsNoOverflow(3);
+        // 2. Get eligibility cooldown from settings
+        $cooldownDays = $this->getEligibilityCooldownDays();
 
-        // 3. Get ALL history for this patient via patient_id
+        // 3. Compute eligibility date (cooldown days after date_issued)
+        $eligibilityDate = Carbon::parse($current->date_issued)
+            ->addDays($cooldownDays);
+
+        // 4. Get ALL history for this patient via patient_id
         $history = DB::table('patient_history')
             ->where('patient_id', $current->patient_id)
             ->select(
@@ -485,6 +496,7 @@ class PatientController extends Controller
 
         return response()->json(['success' => true]);
     }
+    
     public function deleteLetter($glNum)
     {
         $patient = PatientHistory::where('gl_no', $glNum)->firstOrFail()->delete();
@@ -515,9 +527,12 @@ class PatientController extends Controller
             return response()->json(['eligible' => true]);
         }
 
-        // Calculate eligibility date (3 months after last date_issued)
+        // Get eligibility cooldown from settings
+        $cooldownDays = $this->getEligibilityCooldownDays();
+
+        // Calculate eligibility date (cooldown days after last date_issued)
         $eligibilityDate = Carbon::parse($latestRecord->date_issued)
-            ->addMonthsNoOverflow(3);
+            ->addDays($cooldownDays);
 
         $today = Carbon::today();
 
@@ -554,9 +569,12 @@ class PatientController extends Controller
             return response()->json(['eligible' => true]);
         }
 
-        // Calculate eligibility date (3 months after last date_issued)
+        // Get eligibility cooldown from settings
+        $cooldownDays = $this->getEligibilityCooldownDays();
+
+        // Calculate eligibility date (cooldown days after last date_issued)
         $eligibilityDate = Carbon::parse($latestRecord->date_issued)
-            ->addMonthsNoOverflow(3);
+            ->addDays($cooldownDays);
 
         $today = Carbon::today();
 
@@ -577,6 +595,9 @@ class PatientController extends Controller
 
     public function getAllPatientsWithEligibility()
     {
+        // Get eligibility cooldown from settings
+        $cooldownDays = $this->getEligibilityCooldownDays();
+
         // Get all unique patients with their most recent GL record
         $patients = DB::table('patient_list')
             ->leftJoin('patient_history', function ($join) {
@@ -600,6 +621,7 @@ class PatientController extends Controller
                 'patient_list.city',
                 'patient_list.barangay',
                 'patient_list.house_address',
+                'patient_list.phone_number',
                 'patient_history.gl_no',
                 'patient_history.category',
                 'patient_history.date_issued as last_issued_at'
@@ -609,7 +631,7 @@ class PatientController extends Controller
         $today = Carbon::today();
 
         // Add eligibility information to each patient
-        $patientsWithEligibility = $patients->map(function ($patient) use ($today) {
+        $patientsWithEligibility = $patients->map(function ($patient) use ($today, $cooldownDays) {
             if (!$patient->last_issued_at) {
                 // No previous GL records - eligible
                 return array_merge((array)$patient, [
@@ -619,9 +641,9 @@ class PatientController extends Controller
                 ]);
             }
 
-            // Calculate eligibility date (3 months after last issued date)
+            // Calculate eligibility date (cooldown days after last issued date)
             $eligibilityDate = Carbon::parse($patient->last_issued_at)
-                ->addMonthsNoOverflow(3);
+                ->addDays($cooldownDays);
 
             $eligible = $today->greaterThanOrEqualTo($eligibilityDate);
 
