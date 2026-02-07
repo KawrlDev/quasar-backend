@@ -13,6 +13,28 @@ use Carbon\Carbon;
 class PatientController extends Controller
 {
 
+    private function normalizePhoneNumber($phoneNumber)
+    {
+        if (empty($phoneNumber) || $phoneNumber === 'null' || strtolower($phoneNumber) === 'n/a') {
+            return null;
+        }
+
+        // Remove all non-digit characters
+        $cleaned = preg_replace('/\D/', '', $phoneNumber);
+
+        // Convert 63 prefix to 09
+        if (substr($cleaned, 0, 2) === '63') {
+            $cleaned = '0' . substr($cleaned, 2);
+        }
+
+        // Validate: must start with 09 and be exactly 11 digits
+        if (substr($cleaned, 0, 2) !== '09' || strlen($cleaned) !== 11) {
+            return null; // Invalid format
+        }
+
+        return $cleaned;
+    }
+
     public function addPatient(Request $request)
     {
         return DB::transaction(function () use ($request) {
@@ -20,6 +42,15 @@ class PatientController extends Controller
 
             $patientID = $request->input('patient_id');
             $updatePatientInfo = $request->boolean('update_patient_info');
+
+            // Normalize and validate phone number
+            $phoneNumber = $this->normalizePhoneNumber($request->input('phone_number'));
+
+            if ($request->filled('phone_number') && $phoneNumber === null) {
+                return response()->json([
+                    'error' => 'Invalid phone number format. Must be 11 digits starting with 09 or +63'
+                ], 422);
+            }
 
             if ($patientID == null) {
                 // Create new patient
@@ -35,6 +66,7 @@ class PatientController extends Controller
                     'city'          => $nullify($request->input('city')),
                     'barangay'      => $nullify($request->input('barangay')),
                     'house_address' => $nullify($request->input('house_address')),
+                    'phone_number'  => $phoneNumber,
                 ]);
                 $patientID = $patient->patient_id;
             } elseif ($updatePatientInfo) {
@@ -52,6 +84,7 @@ class PatientController extends Controller
                     'city'          => $nullify($request->input('city')),
                     'barangay'      => $nullify($request->input('barangay')),
                     'house_address' => $nullify($request->input('house_address')),
+                    'phone_number'  => $phoneNumber,
                 ]);
             }
 
@@ -107,29 +140,8 @@ class PatientController extends Controller
     }
 
     public function getPatients()
-{
-    $patientList = DB::table('patient_list')
-        ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-        ->select(
-            'patient_list.lastname', 
-            'patient_list.firstname', 
-            'patient_list.middlename', 
-            'patient_list.suffix', 
-            'patient_list.barangay',
-            'patient_history.category', 
-            'patient_history.gl_no', 
-            'patient_history.date_issued'
-        )
-        ->orderby('patient_history.gl_no', 'desc')->get();
-    return response()->json($patientList);
-}
-
-public function search(Request $request)
-{
-    $search = trim($request->query('q'));
-
-    if (!$search) {
-        return DB::table('patient_list')
+    {
+        $patientList = DB::table('patient_list')
             ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
             ->select(
                 'patient_list.lastname',
@@ -141,48 +153,69 @@ public function search(Request $request)
                 'patient_history.gl_no',
                 'patient_history.date_issued'
             )
-            ->orderBy('patient_history.date_issued', 'desc')
-            ->get();
+            ->orderby('patient_history.gl_no', 'desc')->get();
+        return response()->json($patientList);
     }
 
-    // Remove commas for full-name matching
-    $searchNoComma = str_replace(',', '', $search);
+    public function search(Request $request)
+    {
+        $search = trim($request->query('q'));
 
-    return DB::table('patient_list')
-        ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-        ->where(function ($q) use ($search, $searchNoComma) {
+        if (!$search) {
+            return DB::table('patient_list')
+                ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+                ->select(
+                    'patient_list.lastname',
+                    'patient_list.firstname',
+                    'patient_list.middlename',
+                    'patient_list.suffix',
+                    'patient_list.barangay',
+                    'patient_history.category',
+                    'patient_history.gl_no',
+                    'patient_history.date_issued'
+                )
+                ->orderBy('patient_history.date_issued', 'desc')
+                ->get();
+        }
 
-            $q->whereRaw(
-                "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
-                [$searchNoComma]
-            )
+        // Remove commas for full-name matching
+        $searchNoComma = str_replace(',', '', $search);
 
-                ->orWhereRaw(
-                    "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
-                    ["%{$searchNoComma}%"]
+        return DB::table('patient_list')
+            ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+            ->where(function ($q) use ($search, $searchNoComma) {
+
+                $q->whereRaw(
+                    "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
+                    [$searchNoComma]
                 )
 
-                ->orWhere('patient_list.lastname', 'LIKE', "%{$search}%")
-                ->orWhere('patient_list.firstname', 'LIKE', "%{$search}%")
-                ->orWhere('patient_list.middlename', 'LIKE', "%{$search}%")
-                ->orWhere('patient_list.suffix', 'LIKE', "%{$search}%")
-                ->orWhere('patient_list.barangay', 'LIKE', "%{$search}%")
+                    ->orWhereRaw(
+                        "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
+                        ["%{$searchNoComma}%"]
+                    )
 
-                ->orWhere('patient_history.category', 'LIKE', "%{$search}%")
-                ->orWhere('patient_history.gl_no', 'LIKE', "%{$search}%")
-                ->orWhere('patient_history.date_issued', 'LIKE', "%{$search}%");
-        })
-        ->select(
-            'patient_list.lastname',
-            'patient_list.firstname',
-            'patient_list.middlename',
-            'patient_list.suffix',
-            'patient_list.barangay',
-            'patient_history.category',
-            'patient_history.gl_no',
-            'patient_history.date_issued'
-        )
-        ->orderByRaw("
+                    ->orWhere('patient_list.lastname', 'LIKE', "%{$search}%")
+                    ->orWhere('patient_list.firstname', 'LIKE', "%{$search}%")
+                    ->orWhere('patient_list.middlename', 'LIKE', "%{$search}%")
+                    ->orWhere('patient_list.suffix', 'LIKE', "%{$search}%")
+                    ->orWhere('patient_list.barangay', 'LIKE', "%{$search}%")
+
+                    ->orWhere('patient_history.category', 'LIKE', "%{$search}%")
+                    ->orWhere('patient_history.gl_no', 'LIKE', "%{$search}%")
+                    ->orWhere('patient_history.date_issued', 'LIKE', "%{$search}%");
+            })
+            ->select(
+                'patient_list.lastname',
+                'patient_list.firstname',
+                'patient_list.middlename',
+                'patient_list.suffix',
+                'patient_list.barangay',
+                'patient_history.category',
+                'patient_history.gl_no',
+                'patient_history.date_issued'
+            )
+            ->orderByRaw("
             CASE
                 WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ? THEN 1
                 WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ? THEN 2
@@ -192,11 +225,11 @@ public function search(Request $request)
                 ELSE 6
             END
         ", [$searchNoComma, "%{$searchNoComma}%", $search, $search, "%{$search}%"])
-        ->orderBy('patient_list.lastname')
-        ->orderBy('patient_list.firstname')
-        ->orderBy('patient_history.gl_no', 'desc')
-        ->get();
-}
+            ->orderBy('patient_list.lastname')
+            ->orderBy('patient_list.firstname')
+            ->orderBy('patient_history.gl_no', 'desc')
+            ->get();
+    }
 
     public function getPatientDetails($glNum)
     {
@@ -225,6 +258,7 @@ public function search(Request $request)
                 'patient_list.city',
                 'patient_list.barangay',
                 'patient_list.house_address',
+                'patient_list.phone_number',
 
                 // Patient history details
                 'patient_history.partner',
@@ -285,6 +319,15 @@ public function search(Request $request)
 
             $glNum = $request->input('glNum');
 
+            // Normalize and validate phone number
+            $phoneNumber = $this->normalizePhoneNumber($request->input('phone_number'));
+
+            if ($request->filled('phone_number') && $phoneNumber === null) {
+                return response()->json([
+                    'error' => 'Invalid phone number format. Must be 11 digits starting with 09 or +63'
+                ], 422);
+            }
+
             // Get the GL record (transaction)
             $history = PatientHistory::where('gl_no', $glNum)->firstOrFail();
 
@@ -341,15 +384,16 @@ public function search(Request $request)
                     'city'          => $nullify($request->input('city')),
                     'barangay'      => $nullify($request->input('barangay')),
                     'house_address' => $nullify($request->input('house_address')),
+                    'phone_number'  => $phoneNumber,
                 ]);
 
                 // Update this GL to use the new patient_id
                 $history->patient_id = $newPatient->patient_id;
-            } 
+            }
             // CASE 3: Use existing patient
             elseif ($request->has('use_existing_patient_id')) {
                 $history->patient_id = $request->input('use_existing_patient_id');
-            } 
+            }
             // CASE 4: Update existing patient (affects all GLs with this patient_id)
             else {
                 $patient = PatientList::where('patient_id', $history->patient_id)->firstOrFail();
@@ -365,6 +409,7 @@ public function search(Request $request)
                     'city'          => $nullify($request->input('city')),
                     'barangay'      => $nullify($request->input('barangay')),
                     'house_address' => $nullify($request->input('house_address')),
+                    'phone_number'  => $phoneNumber,
                 ]);
             }
 
@@ -412,6 +457,15 @@ public function search(Request $request)
     {
         $nullify = fn($value) => ($value === '' || $value === 'null' || strtolower($value) === 'n/a') ? null : $value;
 
+        // Normalize and validate phone number
+        $phoneNumber = $this->normalizePhoneNumber($request->input('phone_number'));
+
+        if ($request->filled('phone_number') && $phoneNumber === null) {
+            return response()->json([
+                'error' => 'Invalid phone number format. Must be 11 digits starting with 09 or +63'
+            ], 422);
+        }
+
         $patient = PatientList::where('patient_id', $request->input('patient_id'))->firstOrFail();
 
         $patient->update([
@@ -426,11 +480,11 @@ public function search(Request $request)
             'city'          => $nullify($request->input('city')),
             'barangay'      => $nullify($request->input('barangay')),
             'house_address' => $nullify($request->input('house_address')),
+            'phone_number'  => $phoneNumber,
         ]);
 
         return response()->json(['success' => true]);
     }
-
     public function deleteLetter($glNum)
     {
         $patient = PatientHistory::where('gl_no', $glNum)->firstOrFail()->delete();

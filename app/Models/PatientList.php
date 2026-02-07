@@ -22,6 +22,7 @@ class PatientList extends Model
         'city',
         'barangay',
         'house_address',
+        'phone_number',
     ];
     public function setLastnameAttribute($value)
     {
@@ -41,7 +42,8 @@ class PatientList extends Model
     public function setSuffixAttribute($value)
     {
         $this->attributes['suffix'] = $value ? strtoupper($value) : null;
-    }    public function setHouseAddressAttribute($value)
+    }
+    public function setHouseAddressAttribute($value)
     {
         $this->attributes['house_address'] = strtoupper($value);
     }
