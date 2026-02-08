@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 
 use App\Models\YearlyBudget;
 use App\Models\SupplementaryBonus;
+use Illuminate\Support\Facades\DB;
 
 class BudgetController extends Controller
 {
@@ -56,11 +57,11 @@ class BudgetController extends Controller
         $year = $request->input('year'); // e.g. 2026
         $category = $request->input('category'); // optional filter
 
-        $query = \DB::table('patient_history')
+        $query = DB::table('patient_history')
             ->select(
                 'category',
-                \DB::raw('MONTH(date_issued) as month'),
-                \DB::raw('SUM(issued_amount) as total_issued')
+                DB::raw('MONTH(date_issued) as month'),
+                DB::raw('SUM(issued_amount) as total_issued')
             )
             ->whereYear('date_issued', $year);
 

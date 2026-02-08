@@ -312,7 +312,8 @@ class PatientController extends Controller
                 'gl_no',
                 'category',
                 'date_issued',
-                'issued_by'
+                'issued_by',
+                'issued_amount'
             )
             ->orderBy('gl_no', 'desc')
             ->get();
