@@ -497,7 +497,7 @@ class PatientController extends Controller
 
         return response()->json(['success' => true]);
     }
-    
+
     public function deleteLetter($glNum)
     {
         $patient = PatientHistory::where('gl_no', $glNum)->firstOrFail()->delete();
@@ -532,23 +532,27 @@ class PatientController extends Controller
         $cooldownDays = $this->getEligibilityCooldownDays();
 
         // Calculate eligibility date (cooldown days after last date_issued)
+        // Use startOfDay to ignore time component
         $eligibilityDate = Carbon::parse($latestRecord->date_issued)
+            ->startOfDay()
             ->addDays($cooldownDays);
 
-        $today = Carbon::today();
+        $today = Carbon::today()->startOfDay();
 
         // Check if eligible
         if ($today->greaterThanOrEqualTo($eligibilityDate)) {
             return response()->json(['eligible' => true]);
         }
 
-        // Not eligible yet
+        // Not eligible yet - calculate days remaining
+        $daysRemaining = $today->diffInDays($eligibilityDate);
+
         return response()->json([
             'eligible' => false,
             'last_gl_no' => $latestRecord->gl_no,
             'last_issued_at' => $latestRecord->date_issued,
             'eligibility_date' => $eligibilityDate->toDateString(),
-            'days_remaining' => $today->diffInDays($eligibilityDate, false)
+            'days_remaining' => $daysRemaining
         ]);
     }
 
@@ -574,23 +578,27 @@ class PatientController extends Controller
         $cooldownDays = $this->getEligibilityCooldownDays();
 
         // Calculate eligibility date (cooldown days after last date_issued)
+        // Use startOfDay to ignore time component
         $eligibilityDate = Carbon::parse($latestRecord->date_issued)
+            ->startOfDay()
             ->addDays($cooldownDays);
 
-        $today = Carbon::today();
+        $today = Carbon::today()->startOfDay();
 
         // Check if eligible
         if ($today->greaterThanOrEqualTo($eligibilityDate)) {
             return response()->json(['eligible' => true]);
         }
 
-        // Not eligible yet
+        // Not eligible yet - calculate days remaining
+        $daysRemaining = $today->diffInDays($eligibilityDate);
+
         return response()->json([
             'eligible' => false,
             'last_gl_no' => $latestRecord->gl_no,
             'last_issued_at' => $latestRecord->date_issued,
             'eligibility_date' => $eligibilityDate->toDateString(),
-            'days_remaining' => $today->diffInDays($eligibilityDate, false)
+            'days_remaining' => $daysRemaining
         ]);
     }
 
@@ -629,7 +637,7 @@ class PatientController extends Controller
             )
             ->get();
 
-        $today = Carbon::today();
+        $today = Carbon::today()->startOfDay();
 
         // Add eligibility information to each patient
         $patientsWithEligibility = $patients->map(function ($patient) use ($today, $cooldownDays) {
@@ -638,20 +646,23 @@ class PatientController extends Controller
                 return array_merge((array)$patient, [
                     'eligible' => true,
                     'eligibility_date' => null,
-                    'days_remaining' => null
                 ]);
             }
 
             // Calculate eligibility date (cooldown days after last issued date)
+            // Use startOfDay to ignore time component
             $eligibilityDate = Carbon::parse($patient->last_issued_at)
+                ->startOfDay()
                 ->addDays($cooldownDays);
 
             $eligible = $today->greaterThanOrEqualTo($eligibilityDate);
 
+            $daysRemaining = max(0, $today->diffInDays($eligibilityDate) - 1);
+
             return array_merge((array)$patient, [
                 'eligible' => $eligible,
                 'eligibility_date' => $eligibilityDate->toDateString(),
-                'days_remaining' => $eligible ? null : $today->diffInDays($eligibilityDate, false)
+                'days_remaining' => $eligible ? null : $daysRemaining
             ]);
         });
 

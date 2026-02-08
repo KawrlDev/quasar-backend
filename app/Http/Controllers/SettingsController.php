@@ -17,16 +17,19 @@ class SettingsController extends Controller
             'days' => $eligibilityCooldown ?? 90
         ]);
     }
+    
     public function updateEligibilityCooldown(Request $request)
     {
         $eligibilityCooldown = WebsiteSettings::where('id', 1)->update(['eligibility_cooldown' => $request->input('days')]);
         return response()->json(['success' => true]);
     }
+    
     public function getAccounts()
     {
         $accounts = User::select('ID', 'USERNAME', 'PASSWORD', 'ROLE')->orderBy('ID')->get();
         return response()->json([$accounts]);
     }
+    
     public function createAccount(Request $request)
     {
         $account = User::create([
@@ -36,6 +39,24 @@ class SettingsController extends Controller
         ]);
         return response()->json(['success' => true]);
     }
+    
+    public function updateAccount(Request $request)
+    {
+        $updateData = [
+            'USERNAME' => $request->input('username'),
+            'ROLE' => $request->input('role')
+        ];
+
+        // Only update password if provided
+        if ($request->has('password') && $request->input('password') !== null && $request->input('password') !== '') {
+            $updateData['PASSWORD'] = Hash::make($request->input('password'));
+        }
+
+        $account = User::where('ID', $request->input('id'))->update($updateData);
+        
+        return response()->json(['success' => true]);
+    }
+    
     public function deleteAccount(Request $request)
     {
         $account = User::where('ID', '=', $request->input('id'))->delete();

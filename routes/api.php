@@ -52,6 +52,7 @@ Route::get('/get-eligibility-cooldown', [SettingsController::class, 'getEligibil
 Route::post('/update-eligibility-cooldown', [SettingsController::class, 'updateEligibilityCooldown']);
 Route::get('/accounts', [SettingsController::class, 'getAccounts']);
 Route::post('/new-account', [SettingsController::class, 'createAccount']);
+Route::post('/update-account', [SettingsController::class, 'updateAccount']);
 Route::post('/delete-account', [SettingsController::class, 'deleteAccount']);
 
 // GeneralSummaryController
