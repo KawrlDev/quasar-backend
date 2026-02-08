@@ -52,3 +52,4 @@ Route::post('/update-eligibility-cooldown', [SettingsController::class, 'updateE
 Route::get('/accounts', [SettingsController::class, 'getAccounts']);
 Route::post('/new-account', [SettingsController::class, 'createAccount']);
 Route::post('/delete-account', [SettingsController::class, 'deleteAccount']);
+
