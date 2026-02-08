@@ -8,15 +8,20 @@ use Carbon\Carbon;
 
 class GeneralSummaryController extends Controller
 {
-    /**
-     * Get patient records with optional date filtering for general summary table
-     */
     public function filterByDate(Request $request)
     {
-        $query = DB::table('patient_list')
-            ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+        $query = DB::table('patient_history')
+            ->join('patient_list', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+            ->leftJoin('client_name', 'patient_history.gl_no', '=', 'client_name.gl_no')
             ->select(
-                'patient_list.patient_id',
+                'patient_history.gl_no',
+                'patient_history.patient_id',
+                'patient_history.category',
+                'patient_history.partner',
+                'patient_history.hospital_bill',
+                'patient_history.issued_amount',
+                'patient_history.issued_by',
+                'patient_history.date_issued',
                 'patient_list.lastname',
                 'patient_list.firstname',
                 'patient_list.middlename',
@@ -29,48 +34,27 @@ class GeneralSummaryController extends Controller
                 'patient_list.barangay',
                 'patient_list.house_address',
                 'patient_list.phone_number',
-                'patient_history.gl_no',
-                'patient_history.category',
-                'patient_history.partner',
-                'patient_history.hospital_bill',
-                'patient_history.issued_amount',
-                'patient_history.issued_by',
-                'patient_history.date_issued'
+                'client_name.lastname as client_lastname',
+                'client_name.firstname as client_firstname',
+                'client_name.middlename as client_middlename',
+                'client_name.suffix as client_suffix'
             );
 
-        // Handle date filtering - EXACT DATE/RANGE, not month-based
+        // Check if we have date filter
         if ($request->has('from') && $request->has('to')) {
-            // Date range filter
+            // Date range
             $from = Carbon::createFromFormat('d/m/Y', $request->input('from'))->startOfDay();
             $to = Carbon::createFromFormat('d/m/Y', $request->input('to'))->endOfDay();
             
-            \Log::info('Date Range Filter:', [
-                'from_input' => $request->input('from'),
-                'to_input' => $request->input('to'),
-                'from_parsed' => $from->toDateTimeString(),
-                'to_parsed' => $to->toDateTimeString()
-            ]);
-            
             $query->whereBetween('patient_history.date_issued', [$from, $to]);
         } elseif ($request->has('date')) {
-            // Single date filter - EXACT DAY ONLY
+            // Single date
             $date = Carbon::createFromFormat('d/m/Y', $request->input('date'));
-            $dateStart = $date->copy()->startOfDay();
-            $dateEnd = $date->copy()->endOfDay();
-            
-            \Log::info('Single Date Filter:', [
-                'date_input' => $request->input('date'),
-                'date_start' => $dateStart->toDateTimeString(),
-                'date_end' => $dateEnd->toDateTimeString()
-            ]);
-            
-            $query->whereBetween('patient_history.date_issued', [$dateStart, $dateEnd]);
+            $query->whereDate('patient_history.date_issued', $date);
         }
 
-        $records = $query->orderBy('patient_history.date_issued', 'asc')
-            ->orderBy('patient_list.lastname')
-            ->get();
+        $results = $query->orderBy('patient_history.date_issued', 'desc')->get();
 
-        return response()->json($records);
+        return response()->json($results);
     }
 }

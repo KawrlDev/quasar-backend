@@ -30,11 +30,13 @@ class BudgetController extends Controller
         }
         return response()->json(['success' => true]);
     }
+
     public function getYearlyBudget()
     {
         $yearlyBudget = YearlyBudget::select('year', 'medicine_budget', 'laboratory_budget', 'hospital_budget')->orderby('year', 'desc')->get();
         return response()->json($yearlyBudget);
     }
+
     public function addSupplementaryBonus(Request $request)
     {
         SupplementaryBonus::create([
@@ -46,6 +48,7 @@ class BudgetController extends Controller
         ]);
         return response()->json(['success' => true]);
     }
+
     public function getSupplementaryBonus()
     {
         $supplementaryBonus = SupplementaryBonus::select('id', 'year', 'date_added', 'medicine_supplementary_bonus', 'laboratory_supplementary_bonus', 'hospital_supplementary_bonus')->orderby('id', 'desc')->get();
@@ -83,6 +86,91 @@ class BudgetController extends Controller
         return response()->json($output);
     }
 
+    /**
+     * Validate if a budget transfer is possible without going negative
+     */
+    public function validateTransfer(Request $request)
+    {
+        $year = $request->input('year');
+        $category = strtoupper($request->input('category'));
+        $transferAmount = $request->input('amount');
 
+        // Map category to budget field names
+        $budgetField = $this->getCategoryBudgetField($category);
+        $supplementalField = $this->getCategorySupplementalField($category);
 
+        // 1. Get annual budget
+        $yearlyBudget = YearlyBudget::where('year', $year)->first();
+        $annualBudget = $yearlyBudget ? $yearlyBudget->$budgetField : 0;
+
+        // 2. Get total supplemental bonuses for this category and year
+        $totalSupplemental = SupplementaryBonus::where('year', $year)
+            ->sum($supplementalField);
+
+        // 3. Get total amount given (issued) for this category and year
+        $totalGiven = DB::table('patient_history')
+            ->where('category', $category)
+            ->whereYear('date_issued', $year)
+            ->sum('issued_amount');
+
+        // 4. Calculate remaining budget after transfer
+        $remaining = $annualBudget + $totalSupplemental - $totalGiven - $transferAmount;
+
+        // 5. Build breakdown for frontend display
+        $breakdown = [
+            'annual' => $annualBudget,
+            'supplemental' => $totalSupplemental,
+            'given' => $totalGiven,
+            'remaining' => $remaining
+        ];
+
+        // 6. Check if transfer is valid
+        if ($remaining < 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Transfer would result in negative budget. Insufficient funds.',
+                'breakdown' => $breakdown
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Transfer is valid',
+            'breakdown' => $breakdown
+        ]);
+    }
+
+    /**
+     * Helper function to get budget field name based on category
+     */
+    private function getCategoryBudgetField($category)
+    {
+        switch ($category) {
+            case 'MEDICINE':
+                return 'medicine_budget';
+            case 'LABORATORY':
+                return 'laboratory_budget';
+            case 'HOSPITAL':
+                return 'hospital_budget';
+            default:
+                return 'medicine_budget';
+        }
+    }
+
+    /**
+     * Helper function to get supplemental field name based on category
+     */
+    private function getCategorySupplementalField($category)
+    {
+        switch ($category) {
+            case 'MEDICINE':
+                return 'medicine_supplementary_bonus';
+            case 'LABORATORY':
+                return 'laboratory_supplementary_bonus';
+            case 'HOSPITAL':
+                return 'hospital_supplementary_bonus';
+            default:
+                return 'medicine_supplementary_bonus';
+        }
+    }
 }
