@@ -37,6 +37,7 @@ Route::post('/create-yearly-budget', [BudgetController::class, 'createYearlyBudg
 Route::post('/add-supplementary-bonus', [BudgetController::class, 'addSupplementaryBonus']);
 Route::get('/yearly-budget', [BudgetController::class, 'getYearlyBudget']);
 Route::get('/supplementary-bonus', [BudgetController::class, 'getSupplementaryBonus']);
+Route::get('/issued-amounts-by-year', [BudgetController::class, 'getIssuedAmountByYear']);
 
 //DashboardController
 Route::get('/total-patients-and-amount', [DashboardController::class, 'getTotalPatientsAndAmountReleased']);
