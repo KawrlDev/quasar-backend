@@ -128,7 +128,7 @@ class BudgetController extends Controller
         if ($remaining < 0) {
             return response()->json([
                 'success' => false,
-                'message' => 'Transfer would result in negative budget. Insufficient funds.',
+                'message' => 'Transfer amount is more than your remaining budget. Insufficient funds.',
                 'breakdown' => $breakdown
             ]);
         }

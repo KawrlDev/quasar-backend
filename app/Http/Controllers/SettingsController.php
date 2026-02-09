@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use App\Models\WebsiteSettings;
 use App\Models\User;
@@ -42,6 +43,8 @@ class SettingsController extends Controller
     
     public function updateAccount(Request $request)
     {
+        $userId = $request->input('id');
+        
         $updateData = [
             'USERNAME' => $request->input('username'),
             'ROLE' => $request->input('role')
@@ -52,14 +55,35 @@ class SettingsController extends Controller
             $updateData['PASSWORD'] = Hash::make($request->input('password'));
         }
 
-        $account = User::where('ID', $request->input('id'))->update($updateData);
+        $account = User::where('ID', $userId)->update($updateData);
+        
+        // Invalidate all sessions for this user
+        $this->invalidateUserSessions($userId);
         
         return response()->json(['success' => true]);
     }
     
     public function deleteAccount(Request $request)
     {
-        $account = User::where('ID', '=', $request->input('id'))->delete();
+        $userId = $request->input('id');
+        
+        // Invalidate all sessions for this user before deleting
+        $this->invalidateUserSessions($userId);
+        
+        $account = User::where('ID', '=', $userId)->delete();
+        
         return response()->json(['success' => true]);
+    }
+    
+    /**
+     * Invalidate all sessions for a specific user
+     */
+    private function invalidateUserSessions($userId)
+    {
+        // Delete all sessions for this user from the sessions table
+        // This assumes you're using database sessions
+        DB::table('sessions')
+            ->where('user_id', $userId)
+            ->delete();
     }
 }
