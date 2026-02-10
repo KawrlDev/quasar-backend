@@ -141,6 +141,93 @@ class BudgetController extends Controller
     }
 
     /**
+     * Get current available budget across all categories
+     * Calculates: Total Budget (Yearly + Supplementary) - Total Issued Amounts
+     */
+    public function getCurrentBudget()
+    {
+        $currentYear = date('Y');
+
+        // Get yearly budget for current year
+        $yearlyBudget = YearlyBudget::where('year', $currentYear)->first();
+        
+        $medicineBudget = $yearlyBudget ? $yearlyBudget->medicine_budget : 0;
+        $laboratoryBudget = $yearlyBudget ? $yearlyBudget->laboratory_budget : 0;
+        $hospitalBudget = $yearlyBudget ? $yearlyBudget->hospital_budget : 0;
+
+        // Get all supplementary bonuses for current year
+        $supplementaryTotals = SupplementaryBonus::where('year', $currentYear)
+            ->selectRaw('
+                COALESCE(SUM(medicine_supplementary_bonus), 0) as medicine_total,
+                COALESCE(SUM(laboratory_supplementary_bonus), 0) as laboratory_total,
+                COALESCE(SUM(hospital_supplementary_bonus), 0) as hospital_total
+            ')
+            ->first();
+
+        $medicineSupplementary = $supplementaryTotals->medicine_total ?? 0;
+        $laboratorySupplementary = $supplementaryTotals->laboratory_total ?? 0;
+        $hospitalSupplementary = $supplementaryTotals->hospital_total ?? 0;
+
+        // Calculate total budget per category
+        $totalMedicine = $medicineBudget + $medicineSupplementary;
+        $totalLaboratory = $laboratoryBudget + $laboratorySupplementary;
+        $totalHospital = $hospitalBudget + $hospitalSupplementary;
+        $totalBudget = $totalMedicine + $totalLaboratory + $totalHospital;
+
+        // Get total issued amounts per category for current year
+        $issuedAmounts = DB::table('patient_history')
+            ->whereYear('date_issued', $currentYear)
+            ->selectRaw('
+                category,
+                COALESCE(SUM(issued_amount), 0) as total_issued
+            ')
+            ->groupBy('category')
+            ->get()
+            ->keyBy('category');
+
+        $medicineIssued = $issuedAmounts->get('MEDICINE')->total_issued ?? 0;
+        $laboratoryIssued = $issuedAmounts->get('LABORATORY')->total_issued ?? 0;
+        $hospitalIssued = $issuedAmounts->get('HOSPITAL')->total_issued ?? 0;
+        $totalIssued = $medicineIssued + $laboratoryIssued + $hospitalIssued;
+
+        // Calculate remaining budget per category
+        $medicineRemaining = $totalMedicine - $medicineIssued;
+        $laboratoryRemaining = $totalLaboratory - $laboratoryIssued;
+        $hospitalRemaining = $totalHospital - $hospitalIssued;
+        $totalRemaining = $totalBudget - $totalIssued;
+
+        return response()->json([
+            'amount' => $totalRemaining,
+            'total_budget' => $totalBudget,
+            'total_issued' => $totalIssued,
+            'year' => $currentYear,
+            'breakdown' => [
+                'medicine' => [
+                    'budget' => $medicineBudget,
+                    'supplementary' => $medicineSupplementary,
+                    'total' => $totalMedicine,
+                    'issued' => $medicineIssued,
+                    'remaining' => $medicineRemaining
+                ],
+                'laboratory' => [
+                    'budget' => $laboratoryBudget,
+                    'supplementary' => $laboratorySupplementary,
+                    'total' => $totalLaboratory,
+                    'issued' => $laboratoryIssued,
+                    'remaining' => $laboratoryRemaining
+                ],
+                'hospital' => [
+                    'budget' => $hospitalBudget,
+                    'supplementary' => $hospitalSupplementary,
+                    'total' => $totalHospital,
+                    'issued' => $hospitalIssued,
+                    'remaining' => $hospitalRemaining
+                ]
+            ]
+        ]);
+    }
+
+    /**
      * Helper function to get budget field name based on category
      */
     private function getCategoryBudgetField($category)
@@ -173,4 +260,5 @@ class BudgetController extends Controller
                 return 'medicine_supplementary_bonus';
         }
     }
+    
 }
