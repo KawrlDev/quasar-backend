@@ -13,8 +13,10 @@ class DashboardController extends Controller
 {
     public function getTotalPatientsAndAmountReleased()
     {
-        $totalPatients = PatientHistory::count();
-        $totalAmount = PatientHistory::sum('issued_amount');
+        $year = Carbon::now()->year;
+
+        $totalPatients = PatientHistory::whereYear('date_issued', $year)->count();
+        $totalAmount = PatientHistory::whereYear('date_issued', $year)->sum('issued_amount');
 
         return response()->json([
             'totalPatients' => $totalPatients,
@@ -31,10 +33,16 @@ class DashboardController extends Controller
 
         foreach ($categories as $category) {
             $totalBudget = YearlyBudget::where('year', $year)->sum(strtolower($category) . '_budget') 
-                         + SupplementaryBonus::sum(strtolower($category) . '_supplementary_bonus');
+                         + SupplementaryBonus::where('year', $year)->sum(strtolower($category) . '_supplementary_bonus');
 
-            $totalPatients = PatientHistory::where('category', $category)->count();
-            $totalReleased = PatientHistory::where('category', $category)->sum('issued_amount');
+            $totalPatients = PatientHistory::where('category', $category)
+                ->whereYear('date_issued', $year)
+                ->count();
+
+            $totalReleased = PatientHistory::where('category', $category)
+                ->whereYear('date_issued', $year)
+                ->sum('issued_amount');
+
             $remainingBal = $totalBudget - $totalReleased;
 
             $data[strtolower($category) . 'Data'] = [
@@ -50,11 +58,14 @@ class DashboardController extends Controller
 
     public function getAmountGiven()
     {
+        $year = Carbon::now()->year;
+
         // per category
         $categories = ['Medicine', 'Laboratory', 'Hospital'];
         $amountPerCategory = [];
         foreach ($categories as $category) {
             $amountPerCategory[strtolower($category)] = PatientHistory::where('category', $category)
+                ->whereYear('date_issued', $year)
                 ->sum('issued_amount');
         }
 
@@ -62,9 +73,11 @@ class DashboardController extends Controller
         $amountPerSex = [
             'perMale' => PatientHistory::join('patient_list', 'patient_list.patient_id', '=', 'patient_history.patient_id')
                 ->where('patient_list.sex', 'Male')
+                ->whereYear('patient_history.date_issued', $year)
                 ->sum('patient_history.issued_amount'),
             'perFemale' => PatientHistory::join('patient_list', 'patient_list.patient_id', '=', 'patient_history.patient_id')
                 ->where('patient_list.sex', 'Female')
+                ->whereYear('patient_history.date_issued', $year)
                 ->sum('patient_history.issued_amount'),
         ];
 
@@ -83,6 +96,7 @@ class DashboardController extends Controller
         foreach ($ageBrackets as $key => $range) {
             $query = PatientHistory::join('patient_list', 'patient_list.patient_id', '=', 'patient_history.patient_id')
                 ->selectRaw('SUM(patient_history.issued_amount) as total')
+                ->whereYear('patient_history.date_issued', $year)
                 ->whereRaw('TIMESTAMPDIFF(YEAR, patient_list.birthdate, CURDATE()) >= ?', [$range[0]]);
             
             if ($range[1] !== null) {
