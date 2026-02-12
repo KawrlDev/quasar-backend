@@ -20,6 +20,21 @@ class PatientController extends Controller
     {
         return WebsiteSettings::where('id', 1)->value('eligibility_cooldown') ?? 90; // Default to 90 days if not set
     }
+    private function syncPatientSectors(int $patientId, $sectorIdsJson): void
+    {
+        $sectorIds = json_decode($sectorIdsJson, true);
+        if (!is_array($sectorIds)) return;
+
+        DB::table('user_sectors')->where('patient_id', $patientId)->delete();
+
+        if (count($sectorIds) > 0) {
+            $inserts = array_map(fn($id) => [
+                'patient_id' => $patientId,
+                'sector_id'  => (int) $id,
+            ], $sectorIds);
+            DB::table('user_sectors')->insert($inserts);
+        }
+    }
 
     private function normalizePhoneNumber($phoneNumber)
     {
@@ -96,6 +111,10 @@ class PatientController extends Controller
                 ]);
             }
 
+            // Sync sectors if provided
+            if ($request->filled('sector_ids')) {
+                $this->syncPatientSectors($patientID, $request->input('sector_ids'));
+            }
             $hospitalBillInput = $request->input('hospital_bill');
             $hospitalBill = (is_null($hospitalBillInput) || $hospitalBillInput === '' || strtolower($hospitalBillInput) === 'null' || strtolower($hospitalBillInput) === 'n/a')
                 ? null
@@ -152,6 +171,7 @@ class PatientController extends Controller
         $patientList = DB::table('patient_list')
             ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
             ->select(
+                'patient_list.patient_id',
                 'patient_list.lastname',
                 'patient_list.firstname',
                 'patient_list.middlename',
@@ -161,7 +181,27 @@ class PatientController extends Controller
                 'patient_history.gl_no',
                 'patient_history.date_issued'
             )
-            ->orderby('patient_history.gl_no', 'desc')->get();
+            ->orderBy('patient_history.gl_no', 'desc')
+            ->get();
+
+        // Get all unique patient IDs
+        $patientIds = $patientList->pluck('patient_id')->unique()->toArray();
+
+        // Fetch sector IDs for all patients in one query
+        $patientSectors = DB::table('user_sectors')
+            ->whereIn('patient_id', $patientIds)
+            ->select('patient_id', 'sector_id')
+            ->get()
+            ->groupBy('patient_id')
+            ->map(function ($sectors) {
+                return $sectors->pluck('sector_id')->toArray();
+            });
+
+        // Attach sector_ids to each result
+        foreach ($patientList as $patient) {
+            $patient->sector_ids = $patientSectors->get($patient->patient_id, []);
+        }
+
         return response()->json($patientList);
     }
 
@@ -283,6 +323,13 @@ class PatientController extends Controller
             )
             ->first();
 
+        if ($row) {
+            $row->sector_ids = DB::table('user_sectors')
+                ->where('patient_id', $row->patient_id)
+                ->pluck('sector_id')
+                ->toArray();
+        }
+
         return response()->json($row);
     }
 
@@ -379,8 +426,14 @@ class PatientController extends Controller
                     ClientName::where('gl_no', $glNum)->delete();
                 }
 
+                // Sync sectors if provided
+                if ($request->filled('sector_ids')) {
+                    $this->syncPatientSectors($history->patient_id, $request->input('sector_ids'));
+                }
+
                 return response()->json(['success' => true]);
             }
+
 
             // CASE 2: Create new patient
             if ($request->has('force_new_patient') && $request->input('force_new_patient') == '1') {
@@ -458,6 +511,12 @@ class PatientController extends Controller
                 );
             } else {
                 ClientName::where('gl_no', $glNum)->delete();
+            }
+
+            // Sync sectors if provided
+            if ($request->filled('sector_ids')) {
+                $currentPatientId = $history->patient_id;
+                $this->syncPatientSectors($currentPatientId, $request->input('sector_ids'));
             }
 
             return response()->json(['success' => true]);
@@ -640,29 +699,37 @@ class PatientController extends Controller
         $today = Carbon::today()->startOfDay();
 
         // Add eligibility information to each patient
-        $patientsWithEligibility = $patients->map(function ($patient) use ($today, $cooldownDays) {
+        // Pre-fetch all sector mappings in one query to avoid N+1
+        $allSectorMappings = DB::table('user_sectors')
+            ->select('patient_id', 'sector_id')
+            ->get()
+            ->groupBy('patient_id');
+
+        $patientsWithEligibility = $patients->map(function ($patient) use ($today, $cooldownDays, $allSectorMappings) {
+            $sectorIds = isset($allSectorMappings[$patient->patient_id])
+                ? $allSectorMappings[$patient->patient_id]->pluck('sector_id')->toArray()
+                : [];
+
             if (!$patient->last_issued_at) {
-                // No previous GL records - eligible
                 return array_merge((array)$patient, [
-                    'eligible' => true,
+                    'eligible'         => true,
                     'eligibility_date' => null,
+                    'sector_ids'       => $sectorIds,
                 ]);
             }
 
-            // Calculate eligibility date (cooldown days after last issued date)
-            // Use startOfDay to ignore time component
             $eligibilityDate = Carbon::parse($patient->last_issued_at)
                 ->startOfDay()
                 ->addDays($cooldownDays);
 
             $eligible = $today->greaterThanOrEqualTo($eligibilityDate);
-
             $daysRemaining = max(0, $today->diffInDays($eligibilityDate) - 1);
 
             return array_merge((array)$patient, [
-                'eligible' => $eligible,
+                'eligible'         => $eligible,
                 'eligibility_date' => $eligibilityDate->toDateString(),
-                'days_remaining' => $eligible ? null : $daysRemaining
+                'days_remaining'   => $eligible ? null : $daysRemaining,
+                'sector_ids'       => $sectorIds,
             ]);
         });
 

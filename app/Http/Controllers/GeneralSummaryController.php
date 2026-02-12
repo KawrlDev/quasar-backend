@@ -55,6 +55,24 @@ class GeneralSummaryController extends Controller
 
         $results = $query->orderBy('patient_history.date_issued', 'desc')->get();
 
+        // Get all unique patient IDs from results
+        $patientIds = $results->pluck('patient_id')->unique()->toArray();
+
+        // Fetch sector IDs for all patients in one query
+        $patientSectors = DB::table('user_sectors')
+            ->whereIn('patient_id', $patientIds)
+            ->select('patient_id', 'sector_id')
+            ->get()
+            ->groupBy('patient_id')
+            ->map(function ($sectors) {
+                return $sectors->pluck('sector_id')->toArray();
+            });
+
+        // Attach sector_ids to each result
+        foreach ($results as $result) {
+            $result->sector_ids = $patientSectors->get($result->patient_id, []);
+        }
+
         return response()->json($results);
     }
 }

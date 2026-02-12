@@ -6,6 +6,7 @@ use App\Http\Controllers\BudgetController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\GeneralSummaryController;
+use App\Http\Controllers\DropdownOptionsController;
 use App\Http\Controllers\Auth\AuthController;
 
 // Wrap auth routes in web middleware for sessions
@@ -58,3 +59,17 @@ Route::post('/delete-account', [SettingsController::class, 'deleteAccount']);
 
 // GeneralSummaryController
 Route::get('/general-summary-records', [GeneralSummaryController::class, 'filterByDate']);
+
+// DropdownOptionsController
+Route::get('/all', [DropdownOptionsController::class, 'getAllOptions']);
+Route::get('/preferences', [DropdownOptionsController::class, 'getPreferenceOptions']);
+Route::get('/partners', [DropdownOptionsController::class, 'getPartnerOptions']);
+Route::get('/sectors', [DropdownOptionsController::class, 'getSectorOptions']);
+
+Route::post('/preferences', [DropdownOptionsController::class, 'addPreferenceOption']);
+Route::post('/partners', [DropdownOptionsController::class, 'addPartnerOption']);
+Route::post('/sectors', [DropdownOptionsController::class, 'addSectorOption']);
+
+Route::delete('/preferences/{id}', [DropdownOptionsController::class, 'deletePreferenceOption']);
+Route::delete('/partners/{id}', [DropdownOptionsController::class, 'deletePartnerOption']);
+Route::delete('/sectors/{id}', [DropdownOptionsController::class, 'deleteSectorOption']);

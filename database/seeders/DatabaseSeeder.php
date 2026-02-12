@@ -20,6 +20,9 @@ class DatabaseSeeder extends Seeder
         $this->call([
             UsersTableSeeder::class,
             WebsiteSettingsSeeder::class,
+            PartnerSeeder::class,
+            PreferenceSeeder::class,
+            SectorSeeder::class
         ]);
     }
 }
