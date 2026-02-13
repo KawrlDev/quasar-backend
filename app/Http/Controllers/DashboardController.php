@@ -32,8 +32,8 @@ class DashboardController extends Controller
         $data = [];
 
         foreach ($categories as $category) {
-            $totalBudget = YearlyBudget::where('year', $year)->sum(strtolower($category) . '_budget') 
-                         + SupplementaryBonus::where('year', $year)->sum(strtolower($category) . '_supplementary_bonus');
+            $totalBudget = YearlyBudget::where('year', $year)->sum(strtolower($category) . '_budget')
+                + SupplementaryBonus::where('year', $year)->sum(strtolower($category) . '_supplementary_bonus');
 
             $totalPatients = PatientHistory::where('category', $category)
                 ->whereYear('date_issued', $year)
@@ -81,14 +81,14 @@ class DashboardController extends Controller
                 ->sum('patient_history.issued_amount'),
         ];
 
-        // per age bracket - calculate age from birthdate
+        // per age bracket
         $ageBrackets = [
-            '0to1' => [0, 1],
-            '2to5' => [2, 5],
-            '6to12' => [6, 12],
-            '13to19' => [13, 19],
-            '20to39' => [20, 39],
-            '40to64' => [40, 64],
+            '0to1'       => [0, 1],
+            '2to5'       => [2, 5],
+            '6to12'      => [6, 12],
+            '13to19'     => [13, 19],
+            '20to39'     => [20, 39],
+            '40to64'     => [40, 64],
             '65AndAbove' => [65, null],
         ];
 
@@ -98,16 +98,47 @@ class DashboardController extends Controller
                 ->selectRaw('SUM(patient_history.issued_amount) as total')
                 ->whereYear('patient_history.date_issued', $year)
                 ->whereRaw('TIMESTAMPDIFF(YEAR, patient_list.birthdate, CURDATE()) >= ?', [$range[0]]);
-            
+
             if ($range[1] !== null) {
                 $query->whereRaw('TIMESTAMPDIFF(YEAR, patient_list.birthdate, CURDATE()) <= ?', [$range[1]]);
             }
-            
-            $result = $query->first();
-            $amountPerAge[$key] = $result->total ?? 0;
+
+            $amountPerAge[$key] = $query->first()->total ?? 0;
         }
 
-        return response()->json(array_merge($amountPerCategory, $amountPerSex, $amountPerAge));
+        $sectorRows = DB::table('patient_history')
+            ->join('patient_list', 'patient_list.patient_id', '=', 'patient_history.patient_id')
+            ->join('user_sectors', 'user_sectors.patient_id', '=', 'patient_list.patient_id')
+            ->join('sectors', 'sectors.id', '=', 'user_sectors.sector_id')
+            ->selectRaw('sectors.sector, SUM(patient_history.issued_amount) as total')
+            ->whereYear('patient_history.date_issued', $year)
+            ->groupBy('sectors.sector')
+            ->orderByDesc('total')
+            ->get();
+
+        $amountPerSector = [];
+        foreach ($sectorRows as $row) {
+            $amountPerSector['sector_' . $row->sector] = (float) $row->total;
+        }
+
+        // patients with no entry in user_sectors counted as N/A
+        $naTotal = DB::table('patient_history')
+            ->join('patient_list', 'patient_list.patient_id', '=', 'patient_history.patient_id')
+            ->leftJoin('user_sectors', 'user_sectors.patient_id', '=', 'patient_list.patient_id')
+            ->whereYear('patient_history.date_issued', $year)
+            ->whereNull('user_sectors.patient_id')
+            ->sum('patient_history.issued_amount');
+
+        if ($naTotal > 0) {
+            $amountPerSector['sector_N/A'] = (float) $naTotal;
+        }
+
+        return response()->json(array_merge(
+            $amountPerCategory,
+            $amountPerSex,
+            $amountPerAge,
+            $amountPerSector
+        ));
     }
 
     public function getMonthlyPatients()
