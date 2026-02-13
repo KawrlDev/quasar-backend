@@ -36,6 +36,24 @@ class PatientController extends Controller
         }
     }
 
+    private function attachSectorIds($patients)
+{
+    $patientIds = $patients->pluck('patient_id')->unique()->toArray();
+
+    $patientSectors = DB::table('user_sectors')
+        ->whereIn('patient_id', $patientIds)
+        ->select('patient_id', 'sector_id')
+        ->get()
+        ->groupBy('patient_id')
+        ->map(fn($sectors) => $sectors->pluck('sector_id')->toArray());
+
+    foreach ($patients as $patient) {
+        $patient->sector_ids = $patientSectors->get($patient->patient_id, []);
+    }
+
+    return response()->json($patients);
+}
+
     private function normalizePhoneNumber($phoneNumber)
     {
         if (empty($phoneNumber) || $phoneNumber === 'null' || strtolower($phoneNumber) === 'n/a') {
@@ -209,51 +227,12 @@ class PatientController extends Controller
     {
         $search = trim($request->query('q'));
 
-        if (!$search) {
-            return DB::table('patient_list')
-                ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-                ->select(
-                    'patient_list.lastname',
-                    'patient_list.firstname',
-                    'patient_list.middlename',
-                    'patient_list.suffix',
-                    'patient_list.barangay',
-                    'patient_history.category',
-                    'patient_history.gl_no',
-                    'patient_history.date_issued'
-                )
-                ->orderBy('patient_history.date_issued', 'desc')
-                ->get();
-        }
-
-        // Remove commas for full-name matching
-        $searchNoComma = str_replace(',', '', $search);
-
-        return DB::table('patient_list')
+        $baseQuery = DB::table('patient_list')
             ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-            ->where(function ($q) use ($search, $searchNoComma) {
-
-                $q->whereRaw(
-                    "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
-                    [$searchNoComma]
-                )
-
-                    ->orWhereRaw(
-                        "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
-                        ["%{$searchNoComma}%"]
-                    )
-
-                    ->orWhere('patient_list.lastname', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.firstname', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.middlename', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.suffix', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.barangay', 'LIKE', "%{$search}%")
-
-                    ->orWhere('patient_history.category', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_history.gl_no', 'LIKE', "%{$search}%")
-                    ->orWhere('patient_history.date_issued', 'LIKE', "%{$search}%");
-            })
+            ->leftJoin('user_sectors', 'user_sectors.patient_id', '=', 'patient_list.patient_id')
+            ->leftJoin('sectors', 'sectors.id', '=', 'user_sectors.sector_id')
             ->select(
+                'patient_list.patient_id',
                 'patient_list.lastname',
                 'patient_list.firstname',
                 'patient_list.middlename',
@@ -263,6 +242,39 @@ class PatientController extends Controller
                 'patient_history.gl_no',
                 'patient_history.date_issued'
             )
+            ->distinct();
+
+        if (!$search) {
+            $results = $baseQuery
+                ->orderBy('patient_history.date_issued', 'desc')
+                ->get();
+
+            return $this->attachSectorIds($results);
+        }
+
+        $searchNoComma = str_replace(',', '', $search);
+
+        $results = $baseQuery
+            ->where(function ($q) use ($search, $searchNoComma) {
+                $q->whereRaw(
+                    "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
+                    [$searchNoComma]
+                )
+                    ->orWhereRaw(
+                        "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
+                        ["%{$searchNoComma}%"]
+                    )
+                    ->orWhere('patient_list.lastname',        'LIKE', "%{$search}%")
+                    ->orWhere('patient_list.firstname',       'LIKE', "%{$search}%")
+                    ->orWhere('patient_list.middlename',      'LIKE', "%{$search}%")
+                    ->orWhere('patient_list.suffix',          'LIKE', "%{$search}%")
+                    ->orWhere('patient_list.barangay',        'LIKE', "%{$search}%")
+                    ->orWhere('patient_history.category',     'LIKE', "%{$search}%")
+                    ->orWhere('patient_history.gl_no',        'LIKE', "%{$search}%")
+                    ->orWhere('patient_history.date_issued',  'LIKE', "%{$search}%")
+                    // ✅ NEW: search by sector name
+                    ->orWhere('sectors.sector',               'LIKE', "%{$search}%");
+            })
             ->orderByRaw("
             CASE
                 WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ? THEN 1
@@ -270,13 +282,16 @@ class PatientController extends Controller
                 WHEN patient_history.category = ? THEN 3
                 WHEN patient_history.gl_no = ? THEN 4
                 WHEN patient_history.date_issued LIKE ? THEN 5
-                ELSE 6
+                WHEN sectors.sector LIKE ? THEN 6
+                ELSE 7
             END
-        ", [$searchNoComma, "%{$searchNoComma}%", $search, $search, "%{$search}%"])
+        ", [$searchNoComma, "%{$searchNoComma}%", $search, $search, "%{$search}%", "%{$search}%"])
             ->orderBy('patient_list.lastname')
             ->orderBy('patient_list.firstname')
             ->orderBy('patient_history.gl_no', 'desc')
             ->get();
+
+        return $this->attachSectorIds($results);
     }
 
     public function getPatientDetails($glNum)
