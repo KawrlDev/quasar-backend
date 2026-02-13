@@ -400,13 +400,26 @@ class PatientController extends Controller
                     ? null
                     : (float) $hospitalBillInput;
 
-                // Update only GL-SPECIFIC details (patient_history)
-                $history->update([
+                // Prepare update data
+                $updateData = [
                     'category'      => $request->input('category'),
                     'partner'       => $nullify($request->input('partner')),
                     'hospital_bill' => $hospitalBill,
                     'issued_amount' => $nullify($request->input('issued_amount')),
-                ]);
+                ];
+
+                // If issued_by is provided (admin edit), include it
+                if ($request->has('issued_by')) {
+                    $updateData['issued_by'] = $nullify($request->input('issued_by'));
+                }
+
+                // If date_issued is provided (admin edit), include it
+                if ($request->has('date_issued')) {
+                    $updateData['date_issued'] = $nullify($request->input('date_issued'));
+                }
+
+                // Update only GL-SPECIFIC details (patient_history)
+                $history->update($updateData);
 
                 // Handle CLIENT (per-GL)
                 $isChecked = $request->boolean('is_checked');
@@ -486,14 +499,22 @@ class PatientController extends Controller
                 ? null
                 : (float) $hospitalBillInput;
 
-            // Update GL-SPECIFIC details (patient_history)
-            $history->update([
+            // Prepare update data
+            $updateData = [
                 'category'      => $request->input('category'),
                 'partner'       => $nullify($request->input('partner')),
                 'hospital_bill' => $hospitalBill,
                 'issued_amount' => $nullify($request->input('issued_amount')),
                 'issued_by'     => $nullify($request->input('issued_by')),
-            ]);
+            ];
+
+            // If date_issued is provided (admin edit), include it
+            if ($request->has('date_issued')) {
+                $updateData['date_issued'] = $nullify($request->input('date_issued'));
+            }
+
+            // Update GL-SPECIFIC details (patient_history)
+            $history->update($updateData);
 
             // Handle CLIENT (per-GL)
             $isChecked = $request->boolean('is_checked');
