@@ -20,6 +20,7 @@ class PatientController extends Controller
     {
         return WebsiteSettings::where('id', 1)->value('eligibility_cooldown') ?? 90; // Default to 90 days if not set
     }
+
     private function syncPatientSectors(int $patientId, $sectorIdsJson): void
     {
         $sectorIds = json_decode($sectorIdsJson, true);
@@ -37,22 +38,22 @@ class PatientController extends Controller
     }
 
     private function attachSectorIds($patients)
-{
-    $patientIds = $patients->pluck('patient_id')->unique()->toArray();
+    {
+        $patientIds = $patients->pluck('patient_id')->unique()->toArray();
 
-    $patientSectors = DB::table('user_sectors')
-        ->whereIn('patient_id', $patientIds)
-        ->select('patient_id', 'sector_id')
-        ->get()
-        ->groupBy('patient_id')
-        ->map(fn($sectors) => $sectors->pluck('sector_id')->toArray());
+        $patientSectors = DB::table('user_sectors')
+            ->whereIn('patient_id', $patientIds)
+            ->select('patient_id', 'sector_id')
+            ->get()
+            ->groupBy('patient_id')
+            ->map(fn($sectors) => $sectors->pluck('sector_id')->toArray());
 
-    foreach ($patients as $patient) {
-        $patient->sector_ids = $patientSectors->get($patient->patient_id, []);
+        foreach ($patients as $patient) {
+            $patient->sector_ids = $patientSectors->get($patient->patient_id, []);
+        }
+
+        return response()->json($patients);
     }
-
-    return response()->json($patients);
-}
 
     private function normalizePhoneNumber($phoneNumber)
     {
@@ -133,6 +134,7 @@ class PatientController extends Controller
             if ($request->filled('sector_ids')) {
                 $this->syncPatientSectors($patientID, $request->input('sector_ids'));
             }
+
             $hospitalBillInput = $request->input('hospital_bill');
             $hospitalBill = (is_null($hospitalBillInput) || $hospitalBillInput === '' || strtolower($hospitalBillInput) === 'null' || strtolower($hospitalBillInput) === 'n/a')
                 ? null
@@ -150,7 +152,7 @@ class PatientController extends Controller
 
             if (!$request->boolean('is_checked')) {
                 ClientName::create([
-                    'gl_no'        => $patientHistory->gl_no,
+                    'uuid'         => $patientHistory->uuid, // Changed from gl_no
                     'lastname'     => $request->input('client_lastname'),
                     'firstname'    => $request->input('client_firstname'),
                     'middlename'   => $nullify($request->input('client_middlename')),
@@ -159,183 +161,228 @@ class PatientController extends Controller
                 ]);
             }
 
-            // Return the gl_no in a JSON response
-            return response()->json(['gl_no' => $patientHistory->gl_no]);
+            // Return both uuid and gl_no in the response
+            return response()->json([
+                'uuid' => $patientHistory->uuid,
+                'gl_no' => $patientHistory->gl_no
+            ]);
         });
     }
 
     public function existingPatientList(Request $request)
     {
-        $existingPatient = DB::table('patient_list')->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')->where(function ($query) use ($request) {
-            $query->where('patient_list.lastname', $request->input('lastname'))
-                ->where('patient_list.firstname', $request->input('firstname'))
-                ->when($request->filled('middlename'), fn($q) => $q->where('patient_list.middlename', $request->input('middlename')))
-                ->when($request->filled('suffix'), fn($q) => $q->where('patient_list.suffix', $request->input('suffix')));
-        })->select(
+        $existingPatient = DB::table('patient_list')
+            ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+            ->where(function ($query) use ($request) {
+                $query->where('patient_list.lastname', $request->input('lastname'))
+                    ->where('patient_list.firstname', $request->input('firstname'))
+                    ->when($request->filled('middlename'), fn($q) => $q->where('patient_list.middlename', $request->input('middlename')))
+                    ->when($request->filled('suffix'), fn($q) => $q->where('patient_list.suffix', $request->input('suffix')));
+            })
+            ->select(
+                'patient_list.patient_id',
+                'patient_list.lastname',
+                'patient_list.firstname',
+                'patient_list.middlename',
+                'patient_list.suffix',
+                DB::raw('GROUP_CONCAT(patient_history.uuid) as uuids'), // Changed from gl_numbers
+                DB::raw('GROUP_CONCAT(patient_history.gl_no) as gl_numbers') // Keep for display
+            )
+            ->groupBy('patient_list.patient_id', 'patient_list.lastname', 'patient_list.firstname', 'patient_list.middlename', 'patient_list.suffix')
+            ->get();
+
+        return response()->json($existingPatient);
+    }
+
+    public function getPatients()
+{
+    $currentYear = now()->year;
+    
+    $patientList = DB::table('patient_list')
+        ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+        ->select(
             'patient_list.patient_id',
             'patient_list.lastname',
             'patient_list.firstname',
             'patient_list.middlename',
             'patient_list.suffix',
-            DB::raw('GROUP_CONCAT(patient_history.gl_no) as gl_numbers')
+            'patient_list.barangay',
+            'patient_history.category',
+            'patient_history.uuid',
+            'patient_history.gl_no',
+            'patient_history.date_issued'
         )
-            ->groupBy('patient_list.patient_id', 'patient_list.lastname', 'patient_list.firstname', 'patient_list.middlename', 'patient_list.suffix')
-            ->get();
-        return response()->json($existingPatient);
+        ->whereYear('patient_history.date_issued', $currentYear) // Only current year
+        ->orderBy('patient_history.gl_no', 'desc') // Latest GL first
+        ->get();
+
+    // Get all unique patient IDs
+    $patientIds = $patientList->pluck('patient_id')->unique()->toArray();
+
+    // Fetch sector IDs for all patients in one query
+    $patientSectors = DB::table('user_sectors')
+        ->whereIn('patient_id', $patientIds)
+        ->select('patient_id', 'sector_id')
+        ->get()
+        ->groupBy('patient_id')
+        ->map(function ($sectors) {
+            return $sectors->pluck('sector_id')->toArray();
+        });
+
+    // Attach sector_ids to each result
+    foreach ($patientList as $patient) {
+        $patient->sector_ids = $patientSectors->get($patient->patient_id, []);
     }
 
-    public function getPatients()
-    {
-        $patientList = DB::table('patient_list')
-            ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-            ->select(
-                'patient_list.patient_id',
-                'patient_list.lastname',
-                'patient_list.firstname',
-                'patient_list.middlename',
-                'patient_list.suffix',
-                'patient_list.barangay',
-                'patient_history.category',
-                'patient_history.gl_no',
-                'patient_history.date_issued'
-            )
-            ->orderBy('patient_history.gl_no', 'desc')
-            ->get();
+    return response()->json($patientList);
+}
 
-        // Get all unique patient IDs
-        $patientIds = $patientList->pluck('patient_id')->unique()->toArray();
+public function search(Request $request)
+{
+    $search = trim($request->query('q'));
+    $currentYear = now()->year;
 
-        // Fetch sector IDs for all patients in one query
-        $patientSectors = DB::table('user_sectors')
-            ->whereIn('patient_id', $patientIds)
-            ->select('patient_id', 'sector_id')
-            ->get()
-            ->groupBy('patient_id')
-            ->map(function ($sectors) {
-                return $sectors->pluck('sector_id')->toArray();
-            });
+    $baseQuery = DB::table('patient_list')
+        ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+        ->leftJoin('user_sectors', 'user_sectors.patient_id', '=', 'patient_list.patient_id')
+        ->leftJoin('sectors', 'sectors.id', '=', 'user_sectors.sector_id')
+        ->select(
+            'patient_list.patient_id',
+            'patient_list.lastname',
+            'patient_list.firstname',
+            'patient_list.middlename',
+            'patient_list.suffix',
+            'patient_list.barangay',
+            'patient_history.category',
+            'patient_history.uuid',
+            'patient_history.gl_no',
+            'patient_history.date_issued'
+        )
+        ->distinct();
 
-        // Attach sector_ids to each result
-        foreach ($patientList as $patient) {
-            $patient->sector_ids = $patientSectors->get($patient->patient_id, []);
-        }
-
-        return response()->json($patientList);
-    }
-
-    public function search(Request $request)
-    {
-        $search = trim($request->query('q'));
-
-        $baseQuery = DB::table('patient_list')
-            ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-            ->leftJoin('user_sectors', 'user_sectors.patient_id', '=', 'patient_list.patient_id')
-            ->leftJoin('sectors', 'sectors.id', '=', 'user_sectors.sector_id')
-            ->select(
-                'patient_list.patient_id',
-                'patient_list.lastname',
-                'patient_list.firstname',
-                'patient_list.middlename',
-                'patient_list.suffix',
-                'patient_list.barangay',
-                'patient_history.category',
-                'patient_history.gl_no',
-                'patient_history.date_issued'
-            )
-            ->distinct();
-
-        if (!$search) {
-            $results = $baseQuery
-                ->orderBy('patient_history.date_issued', 'desc')
-                ->get();
-
-            return $this->attachSectorIds($results);
-        }
-
-        $searchNoComma = str_replace(',', '', $search);
-
+    // If no search term, show only current year
+    if (!$search) {
         $results = $baseQuery
-            ->where(function ($q) use ($search, $searchNoComma) {
-                $q->whereRaw(
-                    "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
-                    [$searchNoComma]
-                )
-                    ->orWhereRaw(
-                        "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
-                        ["%{$searchNoComma}%"]
-                    )
-                    ->orWhere('patient_list.lastname',        'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.firstname',       'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.middlename',      'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.suffix',          'LIKE', "%{$search}%")
-                    ->orWhere('patient_list.barangay',        'LIKE', "%{$search}%")
-                    ->orWhere('patient_history.category',     'LIKE', "%{$search}%")
-                    ->orWhere('patient_history.gl_no',        'LIKE', "%{$search}%")
-                    ->orWhere('patient_history.date_issued',  'LIKE', "%{$search}%")
-                    // ✅ NEW: search by sector name
-                    ->orWhere('sectors.sector',               'LIKE', "%{$search}%");
-            })
-            ->orderByRaw("
-            CASE
-                WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ? THEN 1
-                WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ? THEN 2
-                WHEN patient_history.category = ? THEN 3
-                WHEN patient_history.gl_no = ? THEN 4
-                WHEN patient_history.date_issued LIKE ? THEN 5
-                WHEN sectors.sector LIKE ? THEN 6
-                ELSE 7
-            END
-        ", [$searchNoComma, "%{$searchNoComma}%", $search, $search, "%{$search}%", "%{$search}%"])
-            ->orderBy('patient_list.lastname')
-            ->orderBy('patient_list.firstname')
+            ->whereYear('patient_history.date_issued', $currentYear)
             ->orderBy('patient_history.gl_no', 'desc')
             ->get();
 
         return $this->attachSectorIds($results);
     }
 
-    public function getPatientDetails($glNum)
+    // If searching by UUID (starts with MAMS-), search all years
+    $isUuidSearch = strpos($search, 'MAMS-') === 0;
+    
+    // If it's a pure number and current year records exist with that GL, prioritize current year
+    $isPureNumber = is_numeric($search);
+
+    $searchNoComma = str_replace(',', '', $search);
+
+    $query = $baseQuery->where(function ($q) use ($search, $searchNoComma, $isPureNumber, $currentYear) {
+        // Name searches (highest priority)
+        $q->whereRaw(
+            "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
+            [$searchNoComma]
+        )
+        ->orWhereRaw(
+            "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
+            ["%{$searchNoComma}%"]
+        )
+        ->orWhere('patient_list.lastname', 'LIKE', "%{$search}%")
+        ->orWhere('patient_list.firstname', 'LIKE', "%{$search}%")
+        ->orWhere('patient_list.middlename', 'LIKE', "%{$search}%")
+        ->orWhere('patient_list.suffix', 'LIKE', "%{$search}%");
+        
+        // If it's a number, search GL number and only show exact match or current year results
+        if ($isPureNumber) {
+            $q->orWhere(function($subQ) use ($search, $currentYear) {
+                $subQ->where('patient_history.gl_no', '=', $search)
+                     ->whereYear('patient_history.date_issued', $currentYear);
+            });
+        } else {
+            // For non-numeric searches, include other fields
+            $q->orWhere('patient_list.barangay', 'LIKE', "%{$search}%")
+              ->orWhere('patient_history.category', 'LIKE', "%{$search}%")
+              ->orWhere('patient_history.uuid', 'LIKE', "%{$search}%")
+              ->orWhere('patient_history.date_issued', 'LIKE', "%{$search}%")
+              ->orWhere('sectors.sector', 'LIKE', "%{$search}%");
+        }
+    });
+
+    $results = $query
+        ->orderByRaw("
+            CASE
+                WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ? THEN 1
+                WHEN patient_history.gl_no = ? AND YEAR(patient_history.date_issued) = ? THEN 2
+                WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ? THEN 3
+                WHEN patient_history.category = ? THEN 4
+                WHEN patient_history.uuid = ? THEN 5
+                WHEN patient_history.date_issued    LIKE ? THEN 6
+                WHEN sectors.sector LIKE ? THEN 7
+                ELSE 8
+            END
+        ", [$searchNoComma, $search, $currentYear, "%{$searchNoComma}%", $search, $search, "%{$search}%", "%{$search}%"])
+        ->orderBy('patient_list.lastname')
+        ->orderBy('patient_list.firstname')
+        ->orderBy('patient_history.gl_no', 'desc')
+        ->get();
+
+    return $this->attachSectorIds($results);
+}
+
+    public function getPatientDetails($identifier)
     {
-        $row = DB::table('patient_history')
+        // Try to determine if identifier is UUID or gl_no
+        // UUID format: MAMS-YYYY-MM-DD-NNNN
+        $isUuid = strpos($identifier, 'MAMS-') === 0;
+
+        $query = DB::table('patient_history')
             ->join('patient_list', 'patient_list.patient_id', '=', 'patient_history.patient_id')
-            ->leftJoin('client_name', 'client_name.gl_no', '=', 'patient_history.gl_no')
-            ->where('patient_history.gl_no', $glNum)
-            ->select(
-                // GL info
-                'patient_history.gl_no',
-                'patient_history.category',
-                'patient_history.date_issued',
+            ->leftJoin('client_name', 'client_name.uuid', '=', 'patient_history.uuid');
 
-                // Patient name
-                'patient_list.patient_id',
-                'patient_list.lastname as patient_lastname',
-                'patient_list.firstname as patient_firstname',
-                'patient_list.middlename as patient_middlename',
-                'patient_list.suffix as patient_suffix',
+        if ($isUuid) {
+            $query->where('patient_history.uuid', $identifier);
+        } else {
+            $query->where('patient_history.gl_no', $identifier);
+        }
 
-                // Patient details from patient_list
-                'patient_list.birthdate',
-                'patient_list.sex',
-                'patient_list.preference',
-                'patient_list.province',
-                'patient_list.city',
-                'patient_list.barangay',
-                'patient_list.house_address',
-                'patient_list.phone_number',
+        $row = $query->select(
+            // History info
+            'patient_history.uuid',
+            'patient_history.gl_no',
+            'patient_history.category',
+            'patient_history.date_issued',
 
-                // Patient history details
-                'patient_history.partner',
-                'patient_history.hospital_bill',
-                'patient_history.issued_amount',
-                'patient_history.issued_by',
+            // Patient name
+            'patient_list.patient_id',
+            'patient_list.lastname as patient_lastname',
+            'patient_list.firstname as patient_firstname',
+            'patient_list.middlename as patient_middlename',
+            'patient_list.suffix as patient_suffix',
 
-                // Client info (optional)
-                'client_name.lastname as client_lastname',
-                'client_name.firstname as client_firstname',
-                'client_name.middlename as client_middlename',
-                'client_name.suffix as client_suffix',
-                'client_name.relationship'
-            )
+            // Patient details from patient_list
+            'patient_list.birthdate',
+            'patient_list.sex',
+            'patient_list.preference',
+            'patient_list.province',
+            'patient_list.city',
+            'patient_list.barangay',
+            'patient_list.house_address',
+            'patient_list.phone_number',
+
+            // Patient history details
+            'patient_history.partner',
+            'patient_history.hospital_bill',
+            'patient_history.issued_amount',
+            'patient_history.issued_by',
+
+            // Client info (optional)
+            'client_name.lastname as client_lastname',
+            'client_name.firstname as client_firstname',
+            'client_name.middlename as client_middlename',
+            'client_name.suffix as client_suffix',
+            'client_name.relationship'
+        )
             ->first();
 
         if ($row) {
@@ -348,16 +395,24 @@ class PatientController extends Controller
         return response()->json($row);
     }
 
-    public function getPatientHistory($glNum)
+    public function getPatientHistory($identifier)
     {
-        // 1. Get the current GL record
-        $current = DB::table('patient_history')
-            ->where('gl_no', $glNum)
-            ->select('patient_id', 'date_issued')
-            ->first();
+        // Try to determine if identifier is UUID or gl_no
+        $isUuid = strpos($identifier, 'MAMS-') === 0;
+
+        $query = DB::table('patient_history');
+
+        if ($isUuid) {
+            $query->where('uuid', $identifier);
+        } else {
+            $query->where('gl_no', $identifier);
+        }
+
+        // 1. Get the current record
+        $current = $query->select('patient_id', 'date_issued')->first();
 
         if (!$current) {
-            return response()->json(['message' => 'GL number not found'], 404);
+            return response()->json(['message' => 'Record not found'], 404);
         }
 
         // 2. Get eligibility cooldown from settings
@@ -371,13 +426,14 @@ class PatientController extends Controller
         $history = DB::table('patient_history')
             ->where('patient_id', $current->patient_id)
             ->select(
+                'uuid',
                 'gl_no',
                 'category',
                 'date_issued',
                 'issued_by',
                 'issued_amount'
             )
-            ->orderBy('gl_no', 'desc')
+            ->orderBy('date_issued', 'desc')
             ->get();
 
         return response()->json([
@@ -391,7 +447,8 @@ class PatientController extends Controller
         return DB::transaction(function () use ($request) {
             $nullify = fn($value) => ($value === '' || $value === 'null' || strtolower($value) === 'n/a') ? null : $value;
 
-            $glNum = $request->input('glNum');
+            $identifier = $request->input('identifier'); // Can be UUID or gl_no
+            $isUuid = strpos($identifier, 'MAMS-') === 0;
 
             // Normalize and validate phone number
             $phoneNumber = $this->normalizePhoneNumber($request->input('phone_number'));
@@ -402,8 +459,12 @@ class PatientController extends Controller
                 ], 422);
             }
 
-            // Get the GL record (transaction)
-            $history = PatientHistory::where('gl_no', $glNum)->firstOrFail();
+            // Get the history record (transaction)
+            if ($isUuid) {
+                $history = PatientHistory::where('uuid', $identifier)->firstOrFail();
+            } else {
+                $history = PatientHistory::where('gl_no', $identifier)->firstOrFail();
+            }
 
             // CASE 1: Update ONLY transaction details (don't touch patient_list)
             if ($request->has('update_transaction_only') && $request->input('update_transaction_only') == '1') {
@@ -433,15 +494,15 @@ class PatientController extends Controller
                     $updateData['date_issued'] = $nullify($request->input('date_issued'));
                 }
 
-                // Update only GL-SPECIFIC details (patient_history)
+                // Update only history-specific details
                 $history->update($updateData);
 
-                // Handle CLIENT (per-GL)
+                // Handle CLIENT (per-history record)
                 $isChecked = $request->boolean('is_checked');
 
                 if (!$isChecked) {
                     ClientName::updateOrCreate(
-                        ['gl_no' => $glNum],
+                        ['uuid' => $history->uuid], // Changed from gl_no
                         [
                             'lastname'     => $request->input('client_lastname'),
                             'firstname'    => $request->input('client_firstname'),
@@ -451,7 +512,7 @@ class PatientController extends Controller
                         ]
                     );
                 } else {
-                    ClientName::where('gl_no', $glNum)->delete();
+                    ClientName::where('uuid', $history->uuid)->delete();
                 }
 
                 // Sync sectors if provided
@@ -461,7 +522,6 @@ class PatientController extends Controller
 
                 return response()->json(['success' => true]);
             }
-
 
             // CASE 2: Create new patient
             if ($request->has('force_new_patient') && $request->input('force_new_patient') == '1') {
@@ -480,14 +540,14 @@ class PatientController extends Controller
                     'phone_number'  => $phoneNumber,
                 ]);
 
-                // Update this GL to use the new patient_id
+                // Update this history record to use the new patient_id
                 $history->patient_id = $newPatient->patient_id;
             }
             // CASE 3: Use existing patient
             elseif ($request->has('use_existing_patient_id')) {
                 $history->patient_id = $request->input('use_existing_patient_id');
             }
-            // CASE 4: Update existing patient (affects all GLs with this patient_id)
+            // CASE 4: Update existing patient (affects all records with this patient_id)
             else {
                 $patient = PatientList::where('patient_id', $history->patient_id)->firstOrFail();
                 $patient->update([
@@ -528,15 +588,15 @@ class PatientController extends Controller
                 $updateData['date_issued'] = $nullify($request->input('date_issued'));
             }
 
-            // Update GL-SPECIFIC details (patient_history)
+            // Update history-specific details
             $history->update($updateData);
 
-            // Handle CLIENT (per-GL)
+            // Handle CLIENT (per-history record)
             $isChecked = $request->boolean('is_checked');
 
             if (!$isChecked) {
                 ClientName::updateOrCreate(
-                    ['gl_no' => $glNum],
+                    ['uuid' => $history->uuid], // Changed from gl_no
                     [
                         'lastname'     => $request->input('client_lastname'),
                         'firstname'    => $request->input('client_firstname'),
@@ -546,7 +606,7 @@ class PatientController extends Controller
                     ]
                 );
             } else {
-                ClientName::where('gl_no', $glNum)->delete();
+                ClientName::where('uuid', $history->uuid)->delete();
             }
 
             // Sync sectors if provided
@@ -593,9 +653,17 @@ class PatientController extends Controller
         return response()->json(['success' => true]);
     }
 
-    public function deleteLetter($glNum)
+    public function deleteLetter($identifier)
     {
-        $patient = PatientHistory::where('gl_no', $glNum)->firstOrFail()->delete();
+        // Try to determine if identifier is UUID or gl_no
+        $isUuid = strpos($identifier, 'MAMS-') === 0;
+
+        if ($isUuid) {
+            $patient = PatientHistory::where('uuid', $identifier)->firstOrFail()->delete();
+        } else {
+            $patient = PatientHistory::where('gl_no', $identifier)->firstOrFail()->delete();
+        }
+
         return response()->json(['success' => true]);
     }
 
@@ -613,7 +681,7 @@ class PatientController extends Controller
             return response()->json(['eligible' => true]);
         }
 
-        // Get the most recent GL record for this patient
+        // Get the most recent record for this patient
         $latestRecord = DB::table('patient_history')
             ->where('patient_id', $patient->patient_id)
             ->orderBy('date_issued', 'desc')
@@ -644,6 +712,7 @@ class PatientController extends Controller
 
         return response()->json([
             'eligible' => false,
+            'uuid' => $latestRecord->uuid, // Added UUID
             'last_gl_no' => $latestRecord->gl_no,
             'last_issued_at' => $latestRecord->date_issued,
             'eligibility_date' => $eligibilityDate->toDateString(),
@@ -659,7 +728,7 @@ class PatientController extends Controller
             return response()->json(['eligible' => true]);
         }
 
-        // Get the most recent GL record for this patient
+        // Get the most recent record for this patient
         $latestRecord = DB::table('patient_history')
             ->where('patient_id', $patientId)
             ->orderBy('date_issued', 'desc')
@@ -690,6 +759,7 @@ class PatientController extends Controller
 
         return response()->json([
             'eligible' => false,
+            'uuid' => $latestRecord->uuid, // Added UUID
             'last_gl_no' => $latestRecord->gl_no,
             'last_issued_at' => $latestRecord->date_issued,
             'eligibility_date' => $eligibilityDate->toDateString(),
@@ -702,12 +772,12 @@ class PatientController extends Controller
         // Get eligibility cooldown from settings
         $cooldownDays = $this->getEligibilityCooldownDays();
 
-        // Get all unique patients with their most recent GL record
+        // Get all unique patients with their most recent record
         $patients = DB::table('patient_list')
             ->leftJoin('patient_history', function ($join) {
                 $join->on('patient_list.patient_id', '=', 'patient_history.patient_id')
-                    ->whereRaw('patient_history.gl_no = (
-                        SELECT MAX(ph2.gl_no) 
+                    ->whereRaw('patient_history.date_issued = (
+                        SELECT MAX(ph2.date_issued) 
                         FROM patient_history ph2 
                         WHERE ph2.patient_id = patient_list.patient_id
                     )');
@@ -726,6 +796,7 @@ class PatientController extends Controller
                 'patient_list.barangay',
                 'patient_list.house_address',
                 'patient_list.phone_number',
+                'patient_history.uuid',
                 'patient_history.gl_no',
                 'patient_history.category',
                 'patient_history.date_issued as last_issued_at'
@@ -734,7 +805,6 @@ class PatientController extends Controller
 
         $today = Carbon::today()->startOfDay();
 
-        // Add eligibility information to each patient
         // Pre-fetch all sector mappings in one query to avoid N+1
         $allSectorMappings = DB::table('user_sectors')
             ->select('patient_id', 'sector_id')
@@ -759,7 +829,7 @@ class PatientController extends Controller
                 ->addDays($cooldownDays);
 
             $eligible = $today->greaterThanOrEqualTo($eligibilityDate);
-            $daysRemaining = max(0, $today->diffInDays($eligibilityDate) - 1);
+            $daysRemaining = max(0, $today->diffInDays($eligibilityDate));
 
             return array_merge((array)$patient, [
                 'eligible'         => $eligible,

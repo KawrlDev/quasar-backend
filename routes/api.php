@@ -26,12 +26,12 @@ Route::post('/patients/check-eligibility-by-id', [PatientController::class, 'che
 Route::get('/patients', [PatientController::class, 'getPatients']);
 Route::get('/patients/all-with-eligibility', [PatientController::class, 'getAllPatientsWithEligibility']);
 Route::get('/patients/search', [PatientController::class, 'search']);
-Route::get('/patient-details/{glNum}', [PatientController::class, 'getPatientDetails']);
-Route::get('/patient-history/{glNum}', [PatientController::class, 'getPatientHistory']);
+Route::get('/patient-details/{identifier}', [PatientController::class, 'getPatientDetails']);
+Route::get('/patient-history/{identifier}', [PatientController::class, 'getPatientHistory']);
+Route::post('/patient-details/delete/{identifier}', [PatientController::class, 'deleteLetter']);
 Route::post('/patient-details/update', [PatientController::class, 'updatePatientDetails']);
 Route::post('/patient-details/update-name', [PatientController::class, 'updatePatientName']);
 Route::post('/patient-name/update', [PatientController::class, 'updatePatientName']);
-Route::post('/patient-details/delete/{glNum}', [PatientController::class, 'deleteLetter']);
 
 // BudgetController
 Route::post('/create-yearly-budget', [BudgetController::class, 'createYearlyBudget']);

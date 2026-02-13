@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('client_name', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('gl_no');
+            $table->string('uuid'); // Changed from gl_no to uuid
             $table->string('lastname');
             $table->string('firstname');
             $table->string('middlename')->nullable();
@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('relationship')->nullable();
             $table->timestamps();
 
-            $table->foreign('gl_no')->references('gl_no')->on('patient_history')->onDelete('cascade');
+            $table->foreign('uuid')->references('uuid')->on('patient_history')->onDelete('cascade');
         });
     }
 

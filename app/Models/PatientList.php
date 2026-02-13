@@ -63,12 +63,24 @@ class PatientList extends Model
     {
         $this->attributes['preference'] = strtoupper($value);
     }
+    public function histories()
+    {
+        return $this->hasMany(PatientHistory::class, 'patient_id', 'patient_id');
+    }
+
     public function details()
     {
-        return $this->hasOne(PatientHistory::class, 'gl_no', 'gl_no');
+        return $this->hasOne(PatientHistory::class, 'patient_id', 'patient_id');
     }
     public function client()
     {
-        return $this->hasOne(ClientName::class, 'gl_no', 'gl_no');
+        return $this->hasManyThrough(
+            ClientName::class,
+            PatientHistory::class,
+            'patient_id',
+            'uuid',
+            'patient_id',
+            'uuid'
+        );
     }
 }

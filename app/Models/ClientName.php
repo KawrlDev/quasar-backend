@@ -12,13 +12,14 @@ class ClientName extends Model
     protected $keyType = 'int';
 
     protected $fillable = [
-        'gl_no',
+        'uuid', // Changed from gl_no to uuid
         'lastname',
         'firstname',
         'middlename',
         'suffix',
         'relationship',
     ];
+
     public function setLastnameAttribute($value)
     {
         $this->attributes['lastname'] = strtoupper($value);
@@ -28,6 +29,7 @@ class ClientName extends Model
     {
         $this->attributes['firstname'] = strtoupper($value);
     }
+
     public function setMiddlenameAttribute($value)
     {
         $this->attributes['middlename'] = $value ? strtoupper($value) : null;
@@ -37,8 +39,17 @@ class ClientName extends Model
     {
         $this->attributes['suffix'] = $value ? strtoupper($value) : null;
     }
+
     public function setRelationshipAttribute($value)
     {
         $this->attributes['relationship'] = $value ? strtoupper($value) : null;
+    }
+
+    /**
+     * Get the patient history that this client is associated with
+     */
+    public function patientHistory()
+    {
+        return $this->belongsTo(PatientHistory::class, 'uuid', 'uuid');
     }
 }

@@ -12,8 +12,9 @@ class GeneralSummaryController extends Controller
     {
         $query = DB::table('patient_history')
             ->join('patient_list', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-            ->leftJoin('client_name', 'patient_history.gl_no', '=', 'client_name.gl_no')
+            ->leftJoin('client_name', 'patient_history.uuid', '=', 'client_name.uuid') // Changed to use UUID
             ->select(
+                'patient_history.uuid', // Added UUID
                 'patient_history.gl_no',
                 'patient_history.patient_id',
                 'patient_history.category',
