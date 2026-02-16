@@ -619,12 +619,10 @@ public function search(Request $request)
         });
     }
 
-    // New endpoint: Update patient name across all records
     public function updatePatientName(Request $request)
     {
         $nullify = fn($value) => ($value === '' || $value === 'null' || strtolower($value) === 'n/a') ? null : $value;
 
-        // Normalize and validate phone number
         $phoneNumber = $this->normalizePhoneNumber($request->input('phone_number'));
 
         if ($request->filled('phone_number') && $phoneNumber === null) {
