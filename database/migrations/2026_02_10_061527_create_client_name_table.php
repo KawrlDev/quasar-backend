@@ -18,7 +18,12 @@ return new class extends Migration
             $table->string('relationship')->nullable();
             $table->timestamps();
 
-            $table->foreign('uuid')->references('uuid')->on('patient_history')->onDelete('cascade');
+            // ✅ Added onUpdate('cascade')
+            $table->foreign('uuid')
+                ->references('uuid')
+                ->on('patient_history')
+                ->onDelete('cascade')
+                ->onUpdate('cascade'); // ← Add this
         });
     }
 
