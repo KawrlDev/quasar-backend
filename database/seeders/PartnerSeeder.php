@@ -12,16 +12,16 @@ class PartnerSeeder extends Seeder
     public function run()
     {
         DB::table('partners')->insert([
-            ['category' => 'MEDICINE', 'partner' => 'PHARMACITI'],
-            ['category' => 'MEDICINE', 'partner' => 'QURESS'],
-            ['category' => 'LABORATORY', 'partner' => 'PERPETUAL LAB'],
-            ['category' => 'LABORATORY', 'partner' => 'MEDILIFE'],
-            ['category' => 'LABORATORY', 'partner' => 'LEXAS'],
-            ['category' => 'LABORATORY', 'partner' => 'CITY MED'],
-            ['category' => 'HOSPITAL', 'partner' => 'TAGUM GLOBAL'],
-            ['category' => 'HOSPITAL', 'partner' => 'CHRIST THE KING'],
-            ['category' => 'HOSPITAL', 'partner' => 'MEDICAL MISSION'],
-            ['category' => 'HOSPITAL', 'partner' => 'TMC'],
+            ['category' => 'MEDICINE', 'partner' => 'PHARMACITI', 'is_active' => true],
+            ['category' => 'MEDICINE', 'partner' => 'QURESS', 'is_active' => true],
+            ['category' => 'LABORATORY', 'partner' => 'PERPETUAL LAB', 'is_active' => true],
+            ['category' => 'LABORATORY', 'partner' => 'MEDILIFE', 'is_active' => true],
+            ['category' => 'LABORATORY', 'partner' => 'LEXAS', 'is_active' => true],
+            ['category' => 'LABORATORY', 'partner' => 'CITY MED', 'is_active' => true],
+            ['category' => 'HOSPITAL', 'partner' => 'TAGUM GLOBAL', 'is_active' => true],
+            ['category' => 'HOSPITAL', 'partner' => 'CHRIST THE KING', 'is_active' => true],
+            ['category' => 'HOSPITAL', 'partner' => 'MEDICAL MISSION', 'is_active' => true],
+            ['category' => 'HOSPITAL', 'partner' => 'TMC', 'is_active' => true],
         ]);
     }
 }

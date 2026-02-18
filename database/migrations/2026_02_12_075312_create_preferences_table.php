@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('preferences', function (Blueprint $table) {
             $table->id('id');
             $table->string('preference');
+            $table->boolean('is_active');
         });
     }
 

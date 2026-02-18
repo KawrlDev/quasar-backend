@@ -58,8 +58,6 @@ class GeneralSummaryController extends Controller
 
         // Get all unique patient IDs from results
         $patientIds = $results->pluck('patient_id')->unique()->toArray();
-
-        // Fetch sector IDs for all patients in one query
         $patientSectors = DB::table('user_sectors')
             ->whereIn('patient_id', $patientIds)
             ->select('patient_id', 'sector_id')

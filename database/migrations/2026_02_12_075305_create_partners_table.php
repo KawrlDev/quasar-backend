@@ -15,6 +15,7 @@ return new class extends Migration
             $table->id('id');
             $table->string('category');
             $table->string('partner');
+            $table->boolean('is_active');
         });
     }
 

@@ -12,9 +12,9 @@ class SectorSeeder extends Seeder
     public function run()
     {
         DB::table('sectors')->insert([
-            ['sector' => 'SENIOR'],
-            ['sector' => 'PWD'],
-            ['sector' => 'SOLO PARENT'],
+            ['sector' => 'SENIOR', 'is_active' => true],
+            ['sector' => 'PWD', 'is_active' => true],
+            ['sector' => 'SOLO PARENT', 'is_active' => true],
         ]);
     }
 }

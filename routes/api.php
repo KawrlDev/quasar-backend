@@ -65,11 +65,14 @@ Route::get('/all', [DropdownOptionsController::class, 'getAllOptions']);
 Route::get('/preferences', [DropdownOptionsController::class, 'getPreferenceOptions']);
 Route::get('/partners', [DropdownOptionsController::class, 'getPartnerOptions']);
 Route::get('/sectors', [DropdownOptionsController::class, 'getSectorOptions']);
+Route::get('/sectors/all', [DropdownOptionsController::class, 'getAllSectors']);
+Route::get('/partners/all', [DropdownOptionsController::class, 'getAllPartners']);
+Route::get('/preferences/all', [DropdownOptionsController::class, 'getAllPreferences']);
 
 Route::post('/preferences', [DropdownOptionsController::class, 'addPreferenceOption']);
 Route::post('/partners', [DropdownOptionsController::class, 'addPartnerOption']);
 Route::post('/sectors', [DropdownOptionsController::class, 'addSectorOption']);
 
-Route::delete('/preferences/{id}', [DropdownOptionsController::class, 'deletePreferenceOption']);
-Route::delete('/partners/{id}', [DropdownOptionsController::class, 'deletePartnerOption']);
-Route::delete('/sectors/{id}', [DropdownOptionsController::class, 'deleteSectorOption']);
+Route::post('/preferences/{id}/toggle', [DropdownOptionsController::class, 'togglePreferenceOption']);
+Route::post('/partners/{id}/toggle', [DropdownOptionsController::class, 'togglePartnerOption']);
+Route::post('/sectors/{id}/toggle', [DropdownOptionsController::class, 'toggleSectorOption']);

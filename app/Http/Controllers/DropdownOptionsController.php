@@ -11,11 +11,11 @@ use Illuminate\Support\Facades\Validator;
 class DropdownOptionsController extends Controller
 {
     // ===================== GET ALL OPTIONS =====================
-    
+
     public function getPreferenceOptions()
     {
         try {
-            $options = Preferences::orderBy('preference')->get();
+            $options = Preferences::where('is_active', true)->orderBy('preference')->get();
             return response()->json($options);
         } catch (\Exception $e) {
             return response()->json(['error' => 'Failed to fetch preference options'], 500);
@@ -25,7 +25,7 @@ class DropdownOptionsController extends Controller
     public function getPartnerOptions()
     {
         try {
-            $options = Partners::orderBy('category')->orderBy('partner')->get();
+            $options = Partners::where('is_active', true)->orderBy('category')->orderBy('partner')->get();
             return response()->json($options);
         } catch (\Exception $e) {
             return response()->json(['error' => 'Failed to fetch partner options'], 500);
@@ -35,7 +35,7 @@ class DropdownOptionsController extends Controller
     public function getSectorOptions()
     {
         try {
-            $options = Sectors::orderBy('sector')->get();
+            $options = Sectors::where('is_active', true)->orderBy('sector')->get();
             return response()->json($options);
         } catch (\Exception $e) {
             return response()->json(['error' => 'Failed to fetch sector options'], 500);
@@ -45,9 +45,9 @@ class DropdownOptionsController extends Controller
     public function getAllOptions()
     {
         try {
-            $preferences = Preferences::orderBy('preference')->get();
-            $partners = Partners::orderBy('category')->orderBy('partner')->get();
-            $sectors = Sectors::orderBy('sector')->get();
+            $preferences = Preferences::where('is_active', true)->orderBy('preference')->get();
+            $partners = Partners::where('is_active', true)->orderBy('category')->orderBy('partner')->get();
+            $sectors = Sectors::where('is_active', true)->orderBy('sector')->get();
 
             return response()->json([
                 'preferences' => $preferences,
@@ -56,6 +56,37 @@ class DropdownOptionsController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => 'Failed to fetch options'], 500);
+        }
+    }
+
+    // Returns ALL sectors regardless of is_active (for displaying existing inactive selections)
+    public function getAllSectors()
+    {
+        try {
+            $options = Sectors::orderBy('sector')->get();
+            return response()->json($options);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to fetch all sectors'], 500);
+        }
+    }
+
+    // Returns ALL partners regardless of is_active (for displaying existing inactive selections)
+    public function getAllPartners()
+    {
+        try {
+            $options = Partners::orderBy('category')->orderBy('partner')->get();
+            return response()->json($options);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to fetch all partners'], 500);
+        }
+    }
+    public function getAllPreferences()
+    {
+        try {
+            $options = Preferences::orderBy('preference')->get();
+            return response()->json($options);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to fetch all preferences'], 500);
         }
     }
 
@@ -73,7 +104,8 @@ class DropdownOptionsController extends Controller
 
         try {
             $option = Preferences::create([
-                'preference' => trim($request->value)
+                'preference' => trim($request->value),
+                'is_active' => true
             ]);
 
             return response()->json([
@@ -96,7 +128,6 @@ class DropdownOptionsController extends Controller
             return response()->json(['error' => $validator->errors()->first()], 422);
         }
 
-        // Check for duplicate within the same category
         $exists = Partners::where('category', $request->category)
             ->where('partner', trim($request->value))
             ->exists();
@@ -108,7 +139,8 @@ class DropdownOptionsController extends Controller
         try {
             $option = Partners::create([
                 'category' => $request->category,
-                'partner' => trim($request->value)
+                'partner' => trim($request->value),
+                'is_active' => true
             ]);
 
             return response()->json([
@@ -132,7 +164,8 @@ class DropdownOptionsController extends Controller
 
         try {
             $option = Sectors::create([
-                'sector' => trim($request->value)
+                'sector' => trim($request->value),
+                'is_active' => true
             ]);
 
             return response()->json([
@@ -144,53 +177,59 @@ class DropdownOptionsController extends Controller
         }
     }
 
-    // ===================== DELETE OPTIONS =====================
+    // ===================== TOGGLE ACTIVE =====================
 
-    public function deletePreferenceOption($id)
+    public function togglePreferenceOption($id)
     {
         try {
             $option = Preferences::findOrFail($id);
-            $option->delete();
+            $option->is_active = !$option->is_active;
+            $option->save();
 
             return response()->json([
-                'message' => 'Preference option deleted successfully'
+                'message' => 'Preference option ' . ($option->is_active ? 'activated' : 'deactivated') . ' successfully',
+                'option' => $option
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['error' => 'Option not found'], 404);
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to delete preference option'], 500);
+            return response()->json(['error' => 'Failed to update preference option'], 500);
         }
     }
 
-    public function deletePartnerOption($id)
+    public function togglePartnerOption($id)
     {
         try {
             $option = Partners::findOrFail($id);
-            $option->delete();
+            $option->is_active = !$option->is_active;
+            $option->save();
 
             return response()->json([
-                'message' => 'Partner option deleted successfully'
+                'message' => 'Partner option ' . ($option->is_active ? 'activated' : 'deactivated') . ' successfully',
+                'option' => $option
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['error' => 'Option not found'], 404);
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to delete partner option'], 500);
+            return response()->json(['error' => 'Failed to update partner option'], 500);
         }
     }
 
-    public function deleteSectorOption($id)
+    public function toggleSectorOption($id)
     {
         try {
             $option = Sectors::findOrFail($id);
-            $option->delete();
+            $option->is_active = !$option->is_active;
+            $option->save();
 
             return response()->json([
-                'message' => 'Sector option deleted successfully'
+                'message' => 'Sector option ' . ($option->is_active ? 'activated' : 'deactivated') . ' successfully',
+                'option' => $option
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['error' => 'Option not found'], 404);
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to delete sector option'], 500);
+            return response()->json(['error' => 'Failed to update sector option'], 500);
         }
     }
 }
