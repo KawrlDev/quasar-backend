@@ -88,6 +88,50 @@ class PatientController extends Controller
         return $cleaned;
     }
 
+    /**
+     * Snapshot current sector IDs for a patient before syncing.
+     * Returns a sorted array of integer sector IDs.
+     */
+    private function getCurrentSectorIds(int $patientId): array
+    {
+        return DB::table('user_sectors')
+            ->where('patient_id', $patientId)
+            ->pluck('sector_id')
+            ->map(fn($id) => (int) $id)
+            ->sort()
+            ->values()
+            ->toArray();
+    }
+
+    /**
+     * Parse and sort sector IDs from a JSON string for comparison.
+     * Returns a sorted array of integer sector IDs.
+     */
+    private function parseNewSectorIds(?string $sectorIdsJson): array
+    {
+        return collect(json_decode($sectorIdsJson, true) ?? [])
+            ->map(fn($id) => (int) $id)
+            ->sort()
+            ->values()
+            ->toArray();
+    }
+
+    /**
+     * Build a sector change log string if the sector IDs differ.
+     * Returns null if no change detected.
+     */
+    private function buildSectorChangeLog(array $oldSectorIds, array $newSectorIds): ?string
+    {
+        if ($oldSectorIds === $newSectorIds) {
+            return null;
+        }
+
+        $oldStr = count($oldSectorIds) ? implode(', ', $oldSectorIds) : 'None';
+        $newStr = count($newSectorIds) ? implode(', ', $newSectorIds) : 'None';
+
+        return "sector_ids: '[{$oldStr}]' → '[{$newStr}]'";
+    }
+
     public function addPatient(Request $request)
     {
         return DB::transaction(function () use ($request) {
@@ -429,6 +473,7 @@ class PatientController extends Controller
             'history'          => $history
         ]);
     }
+
     public function updatePatientDetails(Request $request)
     {
         return DB::transaction(function () use ($request) {
@@ -502,9 +547,14 @@ class PatientController extends Controller
                     ClientName::where('uuid', $history->uuid)->delete();
                 }
 
+                // --- Snapshot old sector IDs BEFORE syncing ---
+                $oldSectorIds = $this->getCurrentSectorIds($history->patient_id);
+
                 if ($request->has('sector_ids')) {
                     $this->syncPatientSectors($history->patient_id, $request->input('sector_ids'));
                 }
+
+                // --- Build changed fields list ---
                 $changedFields = [];
                 foreach ($updateData as $key => $newVal) {
                     $oldVal = $originalHistory[$key] ?? null;
@@ -518,6 +568,13 @@ class PatientController extends Controller
                         };
                         $changedFields[] = "{$key}: '{$formatVal($oldVal,$key)}' → '{$formatVal($newVal,$key)}'";
                     }
+                }
+
+                // --- Detect sector changes ---
+                $newSectorIds = $this->parseNewSectorIds($request->input('sector_ids'));
+                $sectorLog = $this->buildSectorChangeLog($oldSectorIds, $newSectorIds);
+                if ($sectorLog !== null) {
+                    $changedFields[] = $sectorLog;
                 }
 
                 $changesStr = count($changedFields) > 0
@@ -610,6 +667,9 @@ class PatientController extends Controller
                 ClientName::where('uuid', $history->uuid)->delete();
             }
 
+            // --- Snapshot old sector IDs BEFORE syncing ---
+            $oldSectorIds = $this->getCurrentSectorIds($history->patient_id);
+
             if ($request->has('sector_ids')) {
                 $this->syncPatientSectors($history->patient_id, $request->input('sector_ids'));
             }
@@ -663,6 +723,13 @@ class PatientController extends Controller
                         $changedFields[] = "{$key}: '{$displayOld}' → '{$displayNew}'";
                     }
                 }
+            }
+
+            // --- Detect sector changes ---
+            $newSectorIds = $this->parseNewSectorIds($request->input('sector_ids'));
+            $sectorLog = $this->buildSectorChangeLog($oldSectorIds, $newSectorIds);
+            if ($sectorLog !== null) {
+                $changedFields[] = $sectorLog;
             }
 
             $changesStr = count($changedFields) > 0
