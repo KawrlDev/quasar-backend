@@ -195,122 +195,122 @@ class PatientController extends Controller
     }
 
     public function getPatients()
-{
-    $currentYear = now()->year;
-    
-    $patientList = DB::table('patient_list')
-        ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-        ->select(
-            'patient_list.patient_id',
-            'patient_list.lastname',
-            'patient_list.firstname',
-            'patient_list.middlename',
-            'patient_list.suffix',
-            'patient_list.barangay',
-            'patient_history.category',
-            'patient_history.uuid',
-            'patient_history.gl_no',
-            'patient_history.date_issued'
-        )
-        ->whereYear('patient_history.date_issued', $currentYear) // Only current year
-        ->orderBy('patient_history.gl_no', 'desc') // Latest GL first
-        ->get();
+    {
+        $currentYear = now()->year;
 
-    // Get all unique patient IDs
-    $patientIds = $patientList->pluck('patient_id')->unique()->toArray();
-
-    // Fetch sector IDs for all patients in one query
-    $patientSectors = DB::table('user_sectors')
-        ->whereIn('patient_id', $patientIds)
-        ->select('patient_id', 'sector_id')
-        ->get()
-        ->groupBy('patient_id')
-        ->map(function ($sectors) {
-            return $sectors->pluck('sector_id')->toArray();
-        });
-
-    // Attach sector_ids to each result
-    foreach ($patientList as $patient) {
-        $patient->sector_ids = $patientSectors->get($patient->patient_id, []);
-    }
-
-    return response()->json($patientList);
-}
-
-public function search(Request $request)
-{
-    $search = trim($request->query('q'));
-    $currentYear = now()->year;
-
-    $baseQuery = DB::table('patient_list')
-        ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
-        ->leftJoin('user_sectors', 'user_sectors.patient_id', '=', 'patient_list.patient_id')
-        ->leftJoin('sectors', 'sectors.id', '=', 'user_sectors.sector_id')
-        ->select(
-            'patient_list.patient_id',
-            'patient_list.lastname',
-            'patient_list.firstname',
-            'patient_list.middlename',
-            'patient_list.suffix',
-            'patient_list.barangay',
-            'patient_history.category',
-            'patient_history.uuid',
-            'patient_history.gl_no',
-            'patient_history.date_issued'
-        )
-        ->distinct();
-
-    // If no search term, show only current year
-    if (!$search) {
-        $results = $baseQuery
-            ->whereYear('patient_history.date_issued', $currentYear)
-            ->orderBy('patient_history.gl_no', 'desc')
+        $patientList = DB::table('patient_list')
+            ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+            ->select(
+                'patient_list.patient_id',
+                'patient_list.lastname',
+                'patient_list.firstname',
+                'patient_list.middlename',
+                'patient_list.suffix',
+                'patient_list.barangay',
+                'patient_history.category',
+                'patient_history.uuid',
+                'patient_history.gl_no',
+                'patient_history.date_issued'
+            )
+            ->whereYear('patient_history.date_issued', $currentYear) // Only current year
+            ->orderBy('patient_history.gl_no', 'desc') // Latest GL first
             ->get();
 
-        return $this->attachSectorIds($results);
+        // Get all unique patient IDs
+        $patientIds = $patientList->pluck('patient_id')->unique()->toArray();
+
+        // Fetch sector IDs for all patients in one query
+        $patientSectors = DB::table('user_sectors')
+            ->whereIn('patient_id', $patientIds)
+            ->select('patient_id', 'sector_id')
+            ->get()
+            ->groupBy('patient_id')
+            ->map(function ($sectors) {
+                return $sectors->pluck('sector_id')->toArray();
+            });
+
+        // Attach sector_ids to each result
+        foreach ($patientList as $patient) {
+            $patient->sector_ids = $patientSectors->get($patient->patient_id, []);
+        }
+
+        return response()->json($patientList);
     }
 
-    // If searching by UUID (starts with MAMS-), search all years
-    $isUuidSearch = strpos($search, 'MAMS-') === 0;
-    
-    // If it's a pure number and current year records exist with that GL, prioritize current year
-    $isPureNumber = is_numeric($search);
+    public function search(Request $request)
+    {
+        $search = trim($request->query('q'));
+        $currentYear = now()->year;
 
-    $searchNoComma = str_replace(',', '', $search);
+        $baseQuery = DB::table('patient_list')
+            ->join('patient_history', 'patient_history.patient_id', '=', 'patient_list.patient_id')
+            ->leftJoin('user_sectors', 'user_sectors.patient_id', '=', 'patient_list.patient_id')
+            ->leftJoin('sectors', 'sectors.id', '=', 'user_sectors.sector_id')
+            ->select(
+                'patient_list.patient_id',
+                'patient_list.lastname',
+                'patient_list.firstname',
+                'patient_list.middlename',
+                'patient_list.suffix',
+                'patient_list.barangay',
+                'patient_history.category',
+                'patient_history.uuid',
+                'patient_history.gl_no',
+                'patient_history.date_issued'
+            )
+            ->distinct();
 
-    $query = $baseQuery->where(function ($q) use ($search, $searchNoComma, $isPureNumber, $currentYear) {
-        // Name searches (highest priority)
-        $q->whereRaw(
-            "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
-            [$searchNoComma]
-        )
-        ->orWhereRaw(
-            "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
-            ["%{$searchNoComma}%"]
-        )
-        ->orWhere('patient_list.lastname', 'LIKE', "%{$search}%")
-        ->orWhere('patient_list.firstname', 'LIKE', "%{$search}%")
-        ->orWhere('patient_list.middlename', 'LIKE', "%{$search}%")
-        ->orWhere('patient_list.suffix', 'LIKE', "%{$search}%");
-        
-        // If it's a number, search GL number and only show exact match or current year results
-        if ($isPureNumber) {
-            $q->orWhere(function($subQ) use ($search, $currentYear) {
-                $subQ->where('patient_history.gl_no', '=', $search)
-                     ->whereYear('patient_history.date_issued', $currentYear);
-            });
-        } else {
-            // For non-numeric searches, include other fields
-            $q->orWhere('patient_list.barangay', 'LIKE', "%{$search}%")
-              ->orWhere('patient_history.category', 'LIKE', "%{$search}%")
-              ->orWhere('patient_history.uuid', 'LIKE', "%{$search}%")
-              ->orWhere('patient_history.date_issued', 'LIKE', "%{$search}%")
-              ->orWhere('sectors.sector', 'LIKE', "%{$search}%");
+        // If no search term, show only current year
+        if (!$search) {
+            $results = $baseQuery
+                ->whereYear('patient_history.date_issued', $currentYear)
+                ->orderBy('patient_history.gl_no', 'desc')
+                ->get();
+
+            return $this->attachSectorIds($results);
         }
-    });
 
-    $results = $query
-        ->orderByRaw("
+        // If searching by UUID (starts with MAMS-), search all years
+        $isUuidSearch = strpos($search, 'MAMS-') === 0;
+
+        // If it's a pure number and current year records exist with that GL, prioritize current year
+        $isPureNumber = is_numeric($search);
+
+        $searchNoComma = str_replace(',', '', $search);
+
+        $query = $baseQuery->where(function ($q) use ($search, $searchNoComma, $isPureNumber, $currentYear) {
+            // Name searches (highest priority)
+            $q->whereRaw(
+                "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
+                [$searchNoComma]
+            )
+                ->orWhereRaw(
+                    "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ?",
+                    ["%{$searchNoComma}%"]
+                )
+                ->orWhere('patient_list.lastname', 'LIKE', "%{$search}%")
+                ->orWhere('patient_list.firstname', 'LIKE', "%{$search}%")
+                ->orWhere('patient_list.middlename', 'LIKE', "%{$search}%")
+                ->orWhere('patient_list.suffix', 'LIKE', "%{$search}%");
+
+            // If it's a number, search GL number and only show exact match or current year results
+            if ($isPureNumber) {
+                $q->orWhere(function ($subQ) use ($search, $currentYear) {
+                    $subQ->where('patient_history.gl_no', '=', $search)
+                        ->whereYear('patient_history.date_issued', $currentYear);
+                });
+            } else {
+                // For non-numeric searches, include other fields
+                $q->orWhere('patient_list.barangay', 'LIKE', "%{$search}%")
+                    ->orWhere('patient_history.category', 'LIKE', "%{$search}%")
+                    ->orWhere('patient_history.uuid', 'LIKE', "%{$search}%")
+                    ->orWhere('patient_history.date_issued', 'LIKE', "%{$search}%")
+                    ->orWhere('sectors.sector', 'LIKE', "%{$search}%");
+            }
+        });
+
+        $results = $query
+            ->orderByRaw("
             CASE
                 WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ? THEN 1
                 WHEN patient_history.gl_no = ? AND YEAR(patient_history.date_issued) = ? THEN 2
@@ -322,13 +322,13 @@ public function search(Request $request)
                 ELSE 8
             END
         ", [$searchNoComma, $search, $currentYear, "%{$searchNoComma}%", $search, $search, "%{$search}%", "%{$search}%"])
-        ->orderBy('patient_list.lastname')
-        ->orderBy('patient_list.firstname')
-        ->orderBy('patient_history.gl_no', 'desc')
-        ->get();
+            ->orderBy('patient_list.lastname')
+            ->orderBy('patient_list.firstname')
+            ->orderBy('patient_history.gl_no', 'desc')
+            ->get();
 
-    return $this->attachSectorIds($results);
-}
+        return $this->attachSectorIds($results);
+    }
 
     public function getPatientDetails($identifier)
     {
@@ -483,6 +483,10 @@ public function search(Request $request)
                     'hospital_bill' => $hospitalBill,
                     'issued_amount' => $nullify($request->input('issued_amount')),
                 ];
+
+                if ($request->has('gl_no')) {
+                    $updateData['gl_no'] = $request->input('gl_no');
+                }
 
                 // If issued_by is provided (admin edit), include it
                 if ($request->has('issued_by')) {
