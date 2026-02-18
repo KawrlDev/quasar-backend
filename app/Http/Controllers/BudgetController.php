@@ -6,28 +6,81 @@ use Illuminate\Http\Request;
 
 use App\Models\YearlyBudget;
 use App\Models\SupplementaryBonus;
+use App\Models\ActivityLog;
 use Illuminate\Support\Facades\DB;
 
 class BudgetController extends Controller
 {
+    /**
+     * Log an activity action
+     */
+    private function logActivity(Request $request, string $action, string $target, string $changes = ''): void
+    {
+        ActivityLog::create([
+            'performed_by' => $request->input('performed_by') ?? 'Unknown',
+            'action'       => $action,
+            'target'       => $target,
+            'changes'      => $changes,
+        ]);
+    }
+
     public function createYearlyBudget(Request $request)
     {
         $year = $request->input('year');
         $yearlyBudget = YearlyBudget::where('year', $year)->first();
+
+        $medicineBudget    = $request->input('medicine_budget');
+        $laboratoryBudget  = $request->input('laboratory_budget');
+        $hospitalBudget    = $request->input('hospital_budget');
+
+        $formatBudget = fn($v) => '₱' . number_format((float) $v, 2);
+
         if ($yearlyBudget) {
+            // Detect changes before updating
+            $changedFields = [];
+
+            if ((float) $yearlyBudget->medicine_budget !== (float) $medicineBudget) {
+                $changedFields[] = "medicine_budget: '{$formatBudget($yearlyBudget->medicine_budget)}' → '{$formatBudget($medicineBudget)}'";
+            }
+            if ((float) $yearlyBudget->laboratory_budget !== (float) $laboratoryBudget) {
+                $changedFields[] = "laboratory_budget: '{$formatBudget($yearlyBudget->laboratory_budget)}' → '{$formatBudget($laboratoryBudget)}'";
+            }
+            if ((float) $yearlyBudget->hospital_budget !== (float) $hospitalBudget) {
+                $changedFields[] = "hospital_budget: '{$formatBudget($yearlyBudget->hospital_budget)}' → '{$formatBudget($hospitalBudget)}'";
+            }
+
             $yearlyBudget->update([
-                'medicine_budget' => $request->input('medicine_budget'),
-                'laboratory_budget' => $request->input('laboratory_budget'),
-                'hospital_budget' => $request->input('hospital_budget'),
+                'medicine_budget'   => $medicineBudget,
+                'laboratory_budget' => $laboratoryBudget,
+                'hospital_budget'   => $hospitalBudget,
             ]);
+
+            $changesStr = count($changedFields) > 0
+                ? implode(' | ', $changedFields)
+                : 'No changes detected';
+
+            $this->logActivity(
+                $request,
+                'EDIT',
+                "Annual Budget {$year}",
+                $changesStr
+            );
         } else {
             YearlyBudget::create([
-                'year' => $year,
-                'medicine_budget' => $request->input('medicine_budget'),
-                'laboratory_budget' => $request->input('laboratory_budget'),
-                'hospital_budget' => $request->input('hospital_budget'),
+                'year'              => $year,
+                'medicine_budget'   => $medicineBudget,
+                'laboratory_budget' => $laboratoryBudget,
+                'hospital_budget'   => $hospitalBudget,
             ]);
+
+            $this->logActivity(
+                $request,
+                'ADDED',
+                "Annual Budget {$year}",
+                "medicine_budget: {$formatBudget($medicineBudget)} | laboratory_budget: {$formatBudget($laboratoryBudget)} | hospital_budget: {$formatBudget($hospitalBudget)}"
+            );
         }
+
         return response()->json(['success' => true]);
     }
 
@@ -39,13 +92,59 @@ class BudgetController extends Controller
 
     public function addSupplementaryBonus(Request $request)
     {
+        $year                   = $request->input('year');
+        $dateAdded              = $request->input('date_added');
+        $medicineBonus          = $request->input('medicine_supplementary_bonus');
+        $laboratoryBonus        = $request->input('laboratory_supplementary_bonus');
+        $hospitalBonus          = $request->input('hospital_supplementary_bonus');
+
+        // Detect if this is a budget transfer (any value is negative)
+        $isTransfer = (float) $medicineBonus < 0
+            || (float) $laboratoryBonus < 0
+            || (float) $hospitalBonus < 0;
+
         SupplementaryBonus::create([
-            'year' => $request->input('year'),
-            'date_added' => $request->input('date_added'),
-            'medicine_supplementary_bonus' => $request->input('medicine_supplementary_bonus'),
-            'laboratory_supplementary_bonus' => $request->input('laboratory_supplementary_bonus'),
-            'hospital_supplementary_bonus' => $request->input('hospital_supplementary_bonus'),
+            'year'                          => $year,
+            'date_added'                    => $dateAdded,
+            'medicine_supplementary_bonus'  => $medicineBonus,
+            'laboratory_supplementary_bonus' => $laboratoryBonus,
+            'hospital_supplementary_bonus'  => $hospitalBonus,
         ]);
+
+        $formatVal = fn($v) => '₱' . number_format((float) $v, 2);
+
+        if ($isTransfer) {
+            // Build a human-readable transfer summary
+            $from = null;
+            $to   = null;
+            $amount = 0;
+
+            $map = [
+                'MEDICINE'   => (float) $medicineBonus,
+                'LABORATORY' => (float) $laboratoryBonus,
+                'HOSPITAL'   => (float) $hospitalBonus,
+            ];
+
+            foreach ($map as $cat => $val) {
+                if ($val < 0) { $from = $cat; $amount = abs($val); }
+                if ($val > 0) { $to   = $cat; }
+            }
+
+            $this->logActivity(
+                $request,
+                'TRANSFER',
+                "Budget Transfer {$year}",
+                "Transferred {$formatVal($amount)} from {$from} to {$to} | Date: {$dateAdded}"
+            );
+        } else {
+            $this->logActivity(
+                $request,
+                'ADDED',
+                "Supplemental Budget {$year}",
+                "medicine: {$formatVal($medicineBonus)} | laboratory: {$formatVal($laboratoryBonus)} | hospital: {$formatVal($hospitalBonus)} | Date: {$dateAdded}"
+            );
+        }
+
         return response()->json(['success' => true]);
     }
 
@@ -118,24 +217,24 @@ class BudgetController extends Controller
 
         // 5. Build breakdown for frontend display
         $breakdown = [
-            'annual' => $annualBudget,
+            'annual'       => $annualBudget,
             'supplemental' => $totalSupplemental,
-            'given' => $totalGiven,
-            'remaining' => $remaining
+            'given'        => $totalGiven,
+            'remaining'    => $remaining
         ];
 
         // 6. Check if transfer is valid
         if ($remaining < 0) {
             return response()->json([
-                'success' => false,
-                'message' => 'Transfer amount is more than your remaining budget. Insufficient funds.',
+                'success'   => false,
+                'message'   => 'Transfer amount is more than your remaining budget. Insufficient funds.',
                 'breakdown' => $breakdown
             ]);
         }
 
         return response()->json([
-            'success' => true,
-            'message' => 'Transfer is valid',
+            'success'   => true,
+            'message'   => 'Transfer is valid',
             'breakdown' => $breakdown
         ]);
     }
@@ -150,10 +249,10 @@ class BudgetController extends Controller
 
         // Get yearly budget for current year
         $yearlyBudget = YearlyBudget::where('year', $currentYear)->first();
-        
-        $medicineBudget = $yearlyBudget ? $yearlyBudget->medicine_budget : 0;
+
+        $medicineBudget   = $yearlyBudget ? $yearlyBudget->medicine_budget : 0;
         $laboratoryBudget = $yearlyBudget ? $yearlyBudget->laboratory_budget : 0;
-        $hospitalBudget = $yearlyBudget ? $yearlyBudget->hospital_budget : 0;
+        $hospitalBudget   = $yearlyBudget ? $yearlyBudget->hospital_budget : 0;
 
         // Get all supplementary bonuses for current year
         $supplementaryTotals = SupplementaryBonus::where('year', $currentYear)
@@ -164,15 +263,15 @@ class BudgetController extends Controller
             ')
             ->first();
 
-        $medicineSupplementary = $supplementaryTotals->medicine_total ?? 0;
+        $medicineSupplementary   = $supplementaryTotals->medicine_total ?? 0;
         $laboratorySupplementary = $supplementaryTotals->laboratory_total ?? 0;
-        $hospitalSupplementary = $supplementaryTotals->hospital_total ?? 0;
+        $hospitalSupplementary   = $supplementaryTotals->hospital_total ?? 0;
 
         // Calculate total budget per category
-        $totalMedicine = $medicineBudget + $medicineSupplementary;
+        $totalMedicine   = $medicineBudget + $medicineSupplementary;
         $totalLaboratory = $laboratoryBudget + $laboratorySupplementary;
-        $totalHospital = $hospitalBudget + $hospitalSupplementary;
-        $totalBudget = $totalMedicine + $totalLaboratory + $totalHospital;
+        $totalHospital   = $hospitalBudget + $hospitalSupplementary;
+        $totalBudget     = $totalMedicine + $totalLaboratory + $totalHospital;
 
         // Get total issued amounts per category for current year
         $issuedAmounts = DB::table('patient_history')
@@ -185,43 +284,43 @@ class BudgetController extends Controller
             ->get()
             ->keyBy('category');
 
-        $medicineIssued = $issuedAmounts->get('MEDICINE')->total_issued ?? 0;
+        $medicineIssued   = $issuedAmounts->get('MEDICINE')->total_issued ?? 0;
         $laboratoryIssued = $issuedAmounts->get('LABORATORY')->total_issued ?? 0;
-        $hospitalIssued = $issuedAmounts->get('HOSPITAL')->total_issued ?? 0;
-        $totalIssued = $medicineIssued + $laboratoryIssued + $hospitalIssued;
+        $hospitalIssued   = $issuedAmounts->get('HOSPITAL')->total_issued ?? 0;
+        $totalIssued      = $medicineIssued + $laboratoryIssued + $hospitalIssued;
 
         // Calculate remaining budget per category
-        $medicineRemaining = $totalMedicine - $medicineIssued;
+        $medicineRemaining   = $totalMedicine - $medicineIssued;
         $laboratoryRemaining = $totalLaboratory - $laboratoryIssued;
-        $hospitalRemaining = $totalHospital - $hospitalIssued;
-        $totalRemaining = $totalBudget - $totalIssued;
+        $hospitalRemaining   = $totalHospital - $hospitalIssued;
+        $totalRemaining      = $totalBudget - $totalIssued;
 
         return response()->json([
-            'amount' => $totalRemaining,
+            'amount'       => $totalRemaining,
             'total_budget' => $totalBudget,
             'total_issued' => $totalIssued,
-            'year' => $currentYear,
-            'breakdown' => [
+            'year'         => $currentYear,
+            'breakdown'    => [
                 'medicine' => [
-                    'budget' => $medicineBudget,
+                    'budget'        => $medicineBudget,
                     'supplementary' => $medicineSupplementary,
-                    'total' => $totalMedicine,
-                    'issued' => $medicineIssued,
-                    'remaining' => $medicineRemaining
+                    'total'         => $totalMedicine,
+                    'issued'        => $medicineIssued,
+                    'remaining'     => $medicineRemaining
                 ],
                 'laboratory' => [
-                    'budget' => $laboratoryBudget,
+                    'budget'        => $laboratoryBudget,
                     'supplementary' => $laboratorySupplementary,
-                    'total' => $totalLaboratory,
-                    'issued' => $laboratoryIssued,
-                    'remaining' => $laboratoryRemaining
+                    'total'         => $totalLaboratory,
+                    'issued'        => $laboratoryIssued,
+                    'remaining'     => $laboratoryRemaining
                 ],
                 'hospital' => [
-                    'budget' => $hospitalBudget,
+                    'budget'        => $hospitalBudget,
                     'supplementary' => $hospitalSupplementary,
-                    'total' => $totalHospital,
-                    'issued' => $hospitalIssued,
-                    'remaining' => $hospitalRemaining
+                    'total'         => $totalHospital,
+                    'issued'        => $hospitalIssued,
+                    'remaining'     => $hospitalRemaining
                 ]
             ]
         ]);
@@ -233,14 +332,10 @@ class BudgetController extends Controller
     private function getCategoryBudgetField($category)
     {
         switch ($category) {
-            case 'MEDICINE':
-                return 'medicine_budget';
-            case 'LABORATORY':
-                return 'laboratory_budget';
-            case 'HOSPITAL':
-                return 'hospital_budget';
-            default:
-                return 'medicine_budget';
+            case 'MEDICINE':   return 'medicine_budget';
+            case 'LABORATORY': return 'laboratory_budget';
+            case 'HOSPITAL':   return 'hospital_budget';
+            default:           return 'medicine_budget';
         }
     }
 
@@ -250,15 +345,10 @@ class BudgetController extends Controller
     private function getCategorySupplementalField($category)
     {
         switch ($category) {
-            case 'MEDICINE':
-                return 'medicine_supplementary_bonus';
-            case 'LABORATORY':
-                return 'laboratory_supplementary_bonus';
-            case 'HOSPITAL':
-                return 'hospital_supplementary_bonus';
-            default:
-                return 'medicine_supplementary_bonus';
+            case 'MEDICINE':   return 'medicine_supplementary_bonus';
+            case 'LABORATORY': return 'laboratory_supplementary_bonus';
+            case 'HOSPITAL':   return 'hospital_supplementary_bonus';
+            default:           return 'medicine_supplementary_bonus';
         }
     }
-    
 }

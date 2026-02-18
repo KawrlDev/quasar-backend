@@ -118,6 +118,7 @@ class PatientController extends Controller
 
     /**
      * Build a sector change log string if the sector IDs differ.
+     * Resolves sector IDs to names for readability.
      * Returns null if no change detected.
      */
     private function buildSectorChangeLog(array $oldSectorIds, array $newSectorIds): ?string
@@ -126,10 +127,22 @@ class PatientController extends Controller
             return null;
         }
 
-        $oldStr = count($oldSectorIds) ? implode(', ', $oldSectorIds) : 'None';
-        $newStr = count($newSectorIds) ? implode(', ', $newSectorIds) : 'None';
+        // Resolve all relevant IDs to names in one query
+        $allIds = array_unique(array_merge($oldSectorIds, $newSectorIds));
+        $sectorNames = DB::table('sectors')
+            ->whereIn('id', $allIds)
+            ->pluck('sector', 'id');
 
-        return "sector_ids: '[{$oldStr}]' → '[{$newStr}]'";
+        $resolveName = fn($id) => $sectorNames[$id] ?? "ID:{$id}";
+
+        $oldStr = count($oldSectorIds)
+            ? implode(', ', array_map($resolveName, $oldSectorIds))
+            : 'None';
+        $newStr = count($newSectorIds)
+            ? implode(', ', array_map($resolveName, $newSectorIds))
+            : 'None';
+
+        return "sectors: '[{$oldStr}]' → '[{$newStr}]'";
     }
 
     public function addPatient(Request $request)
@@ -532,6 +545,9 @@ class PatientController extends Controller
 
                 $isChecked = $request->boolean('is_checked');
 
+                // --- Snapshot old client BEFORE syncing ---
+                $oldClient = ClientName::where('uuid', $history->uuid)->first();
+
                 if (!$isChecked) {
                     ClientName::updateOrCreate(
                         ['uuid' => $history->uuid],
@@ -547,34 +563,78 @@ class PatientController extends Controller
                     ClientName::where('uuid', $history->uuid)->delete();
                 }
 
-                // --- Snapshot old sector IDs BEFORE syncing ---
-                $oldSectorIds = $this->getCurrentSectorIds($history->patient_id);
+                // --- Snapshot old sector IDs BEFORE syncing (only when sector_ids was sent) ---
+                $sectorIdsProvided = $request->has('sector_ids');
+                $oldSectorIds = $sectorIdsProvided ? $this->getCurrentSectorIds($history->patient_id) : [];
 
-                if ($request->has('sector_ids')) {
+                if ($sectorIdsProvided) {
                     $this->syncPatientSectors($history->patient_id, $request->input('sector_ids'));
                 }
 
                 // --- Build changed fields list ---
+                $normalize = fn($v) => (is_null($v) || $v === '') ? null : $v;
+                $formatVal = function ($v, $k) {
+                    if (in_array($k, ['issued_amount', 'hospital_bill']) && is_numeric($v) && $v !== null) {
+                        return '₱' . number_format((float)$v, 2);
+                    }
+                    return $v ?? 'N/A';
+                };
+
                 $changedFields = [];
+
+                // Diff transaction fields
                 foreach ($updateData as $key => $newVal) {
                     $oldVal = $originalHistory[$key] ?? null;
-                    $normalize = fn($v) => (is_null($v) || $v === '') ? null : $v;
                     if ($normalize($oldVal) != $normalize($newVal)) {
-                        $formatVal = function ($v, $k) {
-                            if (in_array($k, ['issued_amount', 'hospital_bill']) && is_numeric($v) && $v !== null) {
-                                return '₱' . number_format((float)$v, 2);
-                            }
-                            return $v ?? 'N/A';
-                        };
-                        $changedFields[] = "{$key}: '{$formatVal($oldVal,$key)}' → '{$formatVal($newVal,$key)}'";
+                        $changedFields[] = "{$key}: '{$formatVal($oldVal, $key)}' → '{$formatVal($newVal, $key)}'";
                     }
                 }
 
-                // --- Detect sector changes ---
-                $newSectorIds = $this->parseNewSectorIds($request->input('sector_ids'));
-                $sectorLog = $this->buildSectorChangeLog($oldSectorIds, $newSectorIds);
-                if ($sectorLog !== null) {
-                    $changedFields[] = $sectorLog;
+                // --- Detect client name changes ---
+                $oldHasClient = $oldClient !== null;
+                $newHasClient = !$isChecked;
+
+                if ($oldHasClient !== $newHasClient) {
+                    // Client was added or removed entirely
+                    if ($newHasClient) {
+                        $newFullName = $request->input('client_lastname') . ', ' .
+                            $request->input('client_firstname') .
+                            ($request->input('client_middlename') ? ' ' . $request->input('client_middlename') : '') .
+                            ($request->input('client_suffix') ? ' ' . $request->input('client_suffix') : '');
+                        $changedFields[] = "client: 'None' → '{$newFullName}'";
+                    } else {
+                        $oldFullName = $oldClient->lastname . ', ' .
+                            $oldClient->firstname .
+                            ($oldClient->middlename ? ' ' . $oldClient->middlename : '') .
+                            ($oldClient->suffix ? ' ' . $oldClient->suffix : '');
+                        $changedFields[] = "client: '{$oldFullName}' → 'None'";
+                    }
+                } elseif ($oldHasClient && $newHasClient) {
+                    // Client existed before and still exists — diff individual fields
+                    $clientFieldMap = [
+                        'lastname'     => 'client_lastname',
+                        'firstname'    => 'client_firstname',
+                        'middlename'   => 'client_middlename',
+                        'suffix'       => 'client_suffix',
+                        'relationship' => 'relationship',
+                    ];
+
+                    foreach ($clientFieldMap as $modelField => $requestField) {
+                        $oldVal = $oldClient->$modelField;
+                        $newVal = $nullify($request->input($requestField));
+                        if ($normalize($oldVal) != $normalize($newVal)) {
+                            $changedFields[] = "client_{$modelField}: '" . ($oldVal ?? 'N/A') . "' → '" . ($newVal ?? 'N/A') . "'";
+                        }
+                    }
+                }
+
+                // --- Detect sector changes (only when sector_ids was sent) ---
+                if ($sectorIdsProvided) {
+                    $newSectorIds = $this->parseNewSectorIds($request->input('sector_ids'));
+                    $sectorLog = $this->buildSectorChangeLog($oldSectorIds, $newSectorIds);
+                    if ($sectorLog !== null) {
+                        $changedFields[] = $sectorLog;
+                    }
                 }
 
                 $changesStr = count($changedFields) > 0
