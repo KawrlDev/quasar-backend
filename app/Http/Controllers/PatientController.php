@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\PatientList;
-use App\Models\PatientDetails;
 use App\Models\ClientName;
 use App\Models\PatientHistory;
 use App\Models\WebsiteSettings;
@@ -30,7 +29,7 @@ class PatientController extends Controller
         ActivityLog::create([
             'performed_by' => $request->input('performed_by') ?? 'Unknown',
             'action'       => $action,
-            'target'         => $uuid,
+            'target'       => $uuid,
             'changes'      => $changes,
         ]);
     }
@@ -225,13 +224,63 @@ class PatientController extends Controller
                 ]);
             }
 
-            // Log ADDED action
-            $formattedAmount = '₱' . number_format((float)$patientHistory->issued_amount, 2);
+            // --- Log ADDED action with all fields ---
+            $formattedAmount = '₱' . number_format((float) $patientHistory->issued_amount, 2);
+            $formattedBill   = $patientHistory->hospital_bill !== null
+                ? '₱' . number_format((float) $patientHistory->hospital_bill, 2)
+                : 'N/A';
+
+            // Patient full name
+            $patientName = $request->input('lastname') . ', ' . $request->input('firstname') .
+                ($request->input('middlename') ? ' ' . $request->input('middlename') : '') .
+                ($request->input('suffix')     ? ' ' . $request->input('suffix')     : '');
+
+            // Client info (if different from patient)
+            $clientInfo = 'N/A';
+            if (!$request->boolean('is_checked')) {
+                $clientInfo = $request->input('client_lastname') . ', ' . $request->input('client_firstname') .
+                    ($request->input('client_middlename') ? ' ' . $request->input('client_middlename') : '') .
+                    ($request->input('client_suffix')     ? ' ' . $request->input('client_suffix')     : '');
+                if ($request->input('relationship')) {
+                    $clientInfo .= ' (' . $request->input('relationship') . ')';
+                }
+            }
+
+            // Sector names
+            $sectorNames = 'N/A';
+            if ($request->filled('sector_ids')) {
+                $sectorIdsParsed = json_decode($request->input('sector_ids'), true) ?? [];
+                if (!empty($sectorIdsParsed)) {
+                    $resolvedNames = DB::table('sectors')
+                        ->whereIn('id', $sectorIdsParsed)
+                        ->pluck('sector')
+                        ->toArray();
+                    $sectorNames = implode(', ', $resolvedNames);
+                }
+            }
+
+            $logParts = [
+                "GL No: {$patientHistory->gl_no}",
+                "Patient: {$patientName}",
+                "Category: {$patientHistory->category}",
+                "Partner: " . ($patientHistory->partner ?? 'N/A'),
+            ];
+
+            if ($patientHistory->category === 'HOSPITAL') {
+                $logParts[] = "Hospital Bill: {$formattedBill}";
+            }
+
+            $logParts[] = "Issued Amount: {$formattedAmount}";
+            $logParts[] = "Issued By: " . ($patientHistory->issued_by ?? 'N/A');
+            $logParts[] = "Date: {$patientHistory->date_issued}";
+            $logParts[] = "Client: {$clientInfo}";
+            $logParts[] = "Sectors: {$sectorNames}";
+
             $this->logActivity(
                 $request,
                 'ADDED',
                 $patientHistory->uuid,
-                "GL No: {$patientHistory->gl_no} | Category: {$patientHistory->category} | Amount: {$formattedAmount} | Date: {$patientHistory->date_issued}"
+                implode(' | ', $logParts)
             );
 
             return response()->json([
@@ -595,7 +644,6 @@ class PatientController extends Controller
                 $newHasClient = !$isChecked;
 
                 if ($oldHasClient !== $newHasClient) {
-                    // Client was added or removed entirely
                     if ($newHasClient) {
                         $newFullName = $request->input('client_lastname') . ', ' .
                             $request->input('client_firstname') .
@@ -610,7 +658,6 @@ class PatientController extends Controller
                         $changedFields[] = "client: '{$oldFullName}' → 'None'";
                     }
                 } elseif ($oldHasClient && $newHasClient) {
-                    // Client existed before and still exists — diff individual fields
                     $clientFieldMap = [
                         'lastname'     => 'client_lastname',
                         'firstname'    => 'client_firstname',
@@ -671,7 +718,7 @@ class PatientController extends Controller
             // CASE 4: Update existing patient — snapshot BEFORE update, then track changes
             else {
                 $patient = PatientList::where('patient_id', $history->patient_id)->firstOrFail();
-                $originalPatient = $patient->toArray(); // snapshot before update
+                $originalPatient = $patient->toArray();
 
                 $patient->update([
                     'lastname'      => $request->input('lastname'),
@@ -770,8 +817,6 @@ class PatientController extends Controller
                 foreach ($newPatientData as $key => $newVal) {
                     $oldVal = $originalPatient[$key] ?? null;
 
-                    // Normalize birthdate to Y-m-d on both sides before comparing
-                    // to avoid false positives from format differences (DB: Y-m-d, request: Y-m-d)
                     if ($key === 'birthdate' && $normalize($oldVal) !== null && $normalize($newVal) !== null) {
                         $oldVal = \Carbon\Carbon::parse($oldVal)->format('Y-m-d');
                         $newVal = \Carbon\Carbon::parse($newVal)->format('Y-m-d');
