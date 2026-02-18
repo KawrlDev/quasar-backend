@@ -95,26 +95,25 @@ class DropdownOptionsController extends Controller
     public function addPreferenceOption(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'value' => 'required|string|max:255|unique:preferences,preference'
+            'value' => 'required|string|max:255'
         ]);
 
         if ($validator->fails()) {
             return response()->json(['error' => $validator->errors()->first()], 422);
         }
 
-        try {
-            $option = Preferences::create([
-                'preference' => trim($request->value),
-                'is_active' => true
-            ]);
-
-            return response()->json([
-                'message' => 'Preference option added successfully',
-                'option' => $option
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to add preference option'], 500);
+        $existing = Preferences::where('preference', trim($request->value))->first();
+        if ($existing) {
+            if ($existing->is_active) {
+                return response()->json(['error' => 'This option already exists and is active'], 422);
+            }
+            $existing->is_active = true;
+            $existing->save();
+            return response()->json(['message' => 'Option reactivated successfully', 'option' => $existing], 200);
         }
+
+        $option = Preferences::create(['preference' => trim($request->value), 'is_active' => true]);
+        return response()->json(['message' => 'Preference option added successfully', 'option' => $option], 201);
     }
 
     public function addPartnerOption(Request $request)
@@ -128,55 +127,46 @@ class DropdownOptionsController extends Controller
             return response()->json(['error' => $validator->errors()->first()], 422);
         }
 
-        $exists = Partners::where('category', $request->category)
+        $existing = Partners::where('category', $request->category)
             ->where('partner', trim($request->value))
-            ->exists();
+            ->first();
 
-        if ($exists) {
-            return response()->json(['error' => 'This partner already exists in the selected category'], 422);
+        if ($existing) {
+            if ($existing->is_active) {
+                return response()->json(['error' => 'This partner already exists and is active in the selected category'], 422);
+            }
+            $existing->is_active = true;
+            $existing->save();
+            return response()->json(['message' => 'Partner reactivated successfully', 'option' => $existing], 200);
         }
 
-        try {
-            $option = Partners::create([
-                'category' => $request->category,
-                'partner' => trim($request->value),
-                'is_active' => true
-            ]);
-
-            return response()->json([
-                'message' => 'Partner option added successfully',
-                'option' => $option
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to add partner option'], 500);
-        }
+        $option = Partners::create(['category' => $request->category, 'partner' => trim($request->value), 'is_active' => true]);
+        return response()->json(['message' => 'Partner option added successfully', 'option' => $option], 201);
     }
 
     public function addSectorOption(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'value' => 'required|string|max:255|unique:sectors,sector'
+            'value' => 'required|string|max:255'
         ]);
 
         if ($validator->fails()) {
             return response()->json(['error' => $validator->errors()->first()], 422);
         }
 
-        try {
-            $option = Sectors::create([
-                'sector' => trim($request->value),
-                'is_active' => true
-            ]);
-
-            return response()->json([
-                'message' => 'Sector option added successfully',
-                'option' => $option
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to add sector option'], 500);
+        $existing = Sectors::where('sector', trim($request->value))->first();
+        if ($existing) {
+            if ($existing->is_active) {
+                return response()->json(['error' => 'This option already exists and is active'], 422);
+            }
+            $existing->is_active = true;
+            $existing->save();
+            return response()->json(['message' => 'Option reactivated successfully', 'option' => $existing], 200);
         }
-    }
 
+        $option = Sectors::create(['sector' => trim($request->value), 'is_active' => true]);
+        return response()->json(['message' => 'Sector option added successfully', 'option' => $option], 201);
+    }
     // ===================== TOGGLE ACTIVE =====================
 
     public function togglePreferenceOption($id)

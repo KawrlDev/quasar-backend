@@ -17,6 +17,7 @@ class Partners extends Model
     protected $fillable = [
         'category',
         'partner',
+        'is_active',
     ];
     public function setCategoryAttribute($value)
     {

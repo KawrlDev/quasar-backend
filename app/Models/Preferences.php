@@ -16,6 +16,7 @@ class Preferences extends Model
 
     protected $fillable = [
         'preference',
+        'is_active',
     ];
     public function setPreferenceAttribute($value)
     {

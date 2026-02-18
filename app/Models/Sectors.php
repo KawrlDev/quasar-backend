@@ -16,6 +16,7 @@ class Sectors extends Model
 
     protected $fillable = [
         'sector',
+        'is_active',
     ];
     public function setSectorAttribute($value)
     {
