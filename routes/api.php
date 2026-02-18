@@ -7,6 +7,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\GeneralSummaryController;
 use App\Http\Controllers\DropdownOptionsController;
+use App\Http\Controllers\ActivityLogController;
 use App\Http\Controllers\Auth\AuthController;
 
 // Wrap auth routes in web middleware for sessions
@@ -76,3 +77,7 @@ Route::post('/sectors', [DropdownOptionsController::class, 'addSectorOption']);
 Route::post('/preferences/{id}/toggle', [DropdownOptionsController::class, 'togglePreferenceOption']);
 Route::post('/partners/{id}/toggle', [DropdownOptionsController::class, 'togglePartnerOption']);
 Route::post('/sectors/{id}/toggle', [DropdownOptionsController::class, 'toggleSectorOption']);
+
+// ActivityLogController
+Route::get('/activity-logs', [ActivitylogController::class, 'getLogs']);
+Route::get('/activity-logs/actions', [ActivitylogController::class, 'getActionTypes']);

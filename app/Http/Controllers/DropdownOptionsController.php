@@ -5,11 +5,25 @@ namespace App\Http\Controllers;
 use App\Models\Preferences;
 use App\Models\Partners;
 use App\Models\Sectors;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class DropdownOptionsController extends Controller
 {
+    /**
+     * Log an activity action for dropdown changes
+     */
+    private function logActivity(Request $request, string $action, string $changes = ''): void
+    {
+        ActivityLog::create([
+            'performed_by' => $request->input('performed_by') ?? 'Unknown',
+            'action'       => $action,
+            'target'         => 'DROPDOWN',
+            'changes'      => $changes,
+        ]);
+    }
+
     // ===================== GET ALL OPTIONS =====================
 
     public function getPreferenceOptions()
@@ -51,8 +65,8 @@ class DropdownOptionsController extends Controller
 
             return response()->json([
                 'preferences' => $preferences,
-                'partners' => $partners,
-                'sectors' => $sectors
+                'partners'    => $partners,
+                'sectors'     => $sectors
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => 'Failed to fetch options'], 500);
@@ -80,6 +94,7 @@ class DropdownOptionsController extends Controller
             return response()->json(['error' => 'Failed to fetch all partners'], 500);
         }
     }
+
     public function getAllPreferences()
     {
         try {
@@ -109,10 +124,16 @@ class DropdownOptionsController extends Controller
             }
             $existing->is_active = true;
             $existing->save();
+
+            $this->logActivity($request, 'DROPDOWN REACTIVATED', "Table: Preference | Option: '{$existing->preference}' reactivated");
+
             return response()->json(['message' => 'Option reactivated successfully', 'option' => $existing], 200);
         }
 
         $option = Preferences::create(['preference' => trim($request->value), 'is_active' => true]);
+
+        $this->logActivity($request, 'DROPDOWN ADDED', "Table: Preference | Option: '{$option->preference}' added");
+
         return response()->json(['message' => 'Preference option added successfully', 'option' => $option], 201);
     }
 
@@ -120,7 +141,7 @@ class DropdownOptionsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'category' => 'required|in:MEDICINE,LABORATORY,HOSPITAL',
-            'value' => 'required|string|max:255'
+            'value'    => 'required|string|max:255'
         ]);
 
         if ($validator->fails()) {
@@ -137,10 +158,16 @@ class DropdownOptionsController extends Controller
             }
             $existing->is_active = true;
             $existing->save();
+
+            $this->logActivity($request, 'DROPDOWN REACTIVATED', "Table: Partner | Category: {$existing->category} | Option: '{$existing->partner}' reactivated");
+
             return response()->json(['message' => 'Partner reactivated successfully', 'option' => $existing], 200);
         }
 
         $option = Partners::create(['category' => $request->category, 'partner' => trim($request->value), 'is_active' => true]);
+
+        $this->logActivity($request, 'DROPDOWN ADDED', "Table: Partner | Category: {$option->category} | Option: '{$option->partner}' added");
+
         return response()->json(['message' => 'Partner option added successfully', 'option' => $option], 201);
     }
 
@@ -161,24 +188,39 @@ class DropdownOptionsController extends Controller
             }
             $existing->is_active = true;
             $existing->save();
+
+            $this->logActivity($request, 'DROPDOWN REACTIVATED', "Table: Sector | Option: '{$existing->sector}' reactivated");
+
             return response()->json(['message' => 'Option reactivated successfully', 'option' => $existing], 200);
         }
 
         $option = Sectors::create(['sector' => trim($request->value), 'is_active' => true]);
+
+        $this->logActivity($request, 'DROPDOWN ADDED', "Table: Sector | Option: '{$option->sector}' added");
+
         return response()->json(['message' => 'Sector option added successfully', 'option' => $option], 201);
     }
+
     // ===================== TOGGLE ACTIVE =====================
 
-    public function togglePreferenceOption($id)
+    public function togglePreferenceOption(Request $request, $id)
     {
         try {
             $option = Preferences::findOrFail($id);
+            $oldStatus = $option->is_active ? 'Active' : 'Inactive';
             $option->is_active = !$option->is_active;
             $option->save();
+            $newStatus = $option->is_active ? 'Active' : 'Inactive';
+
+            $this->logActivity(
+                $request,
+                'DROPDOWN TOGGLED',
+                "Table: Preference | Option: '{$option->preference}' | Status: '{$oldStatus}' → '{$newStatus}'"
+            );
 
             return response()->json([
                 'message' => 'Preference option ' . ($option->is_active ? 'activated' : 'deactivated') . ' successfully',
-                'option' => $option
+                'option'  => $option
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['error' => 'Option not found'], 404);
@@ -187,16 +229,24 @@ class DropdownOptionsController extends Controller
         }
     }
 
-    public function togglePartnerOption($id)
+    public function togglePartnerOption(Request $request, $id)
     {
         try {
             $option = Partners::findOrFail($id);
+            $oldStatus = $option->is_active ? 'Active' : 'Inactive';
             $option->is_active = !$option->is_active;
             $option->save();
+            $newStatus = $option->is_active ? 'Active' : 'Inactive';
+
+            $this->logActivity(
+                $request,
+                'DROPDOWN TOGGLED',
+                "Table: Partner | Category: {$option->category} | Option: '{$option->partner}' | Status: '{$oldStatus}' → '{$newStatus}'"
+            );
 
             return response()->json([
                 'message' => 'Partner option ' . ($option->is_active ? 'activated' : 'deactivated') . ' successfully',
-                'option' => $option
+                'option'  => $option
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['error' => 'Option not found'], 404);
@@ -205,16 +255,24 @@ class DropdownOptionsController extends Controller
         }
     }
 
-    public function toggleSectorOption($id)
+    public function toggleSectorOption(Request $request, $id)
     {
         try {
             $option = Sectors::findOrFail($id);
+            $oldStatus = $option->is_active ? 'Active' : 'Inactive';
             $option->is_active = !$option->is_active;
             $option->save();
+            $newStatus = $option->is_active ? 'Active' : 'Inactive';
+
+            $this->logActivity(
+                $request,
+                'DROPDOWN TOGGLED',
+                "Table: Sector | Option: '{$option->sector}' | Status: '{$oldStatus}' → '{$newStatus}'"
+            );
 
             return response()->json([
                 'message' => 'Sector option ' . ($option->is_active ? 'activated' : 'deactivated') . ' successfully',
-                'option' => $option
+                'option'  => $option
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['error' => 'Option not found'], 404);

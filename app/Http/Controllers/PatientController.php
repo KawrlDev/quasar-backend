@@ -7,6 +7,7 @@ use App\Models\PatientDetails;
 use App\Models\ClientName;
 use App\Models\PatientHistory;
 use App\Models\WebsiteSettings;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -18,7 +19,20 @@ class PatientController extends Controller
      */
     private function getEligibilityCooldownDays()
     {
-        return WebsiteSettings::where('id', 1)->value('eligibility_cooldown') ?? 90; // Default to 90 days if not set
+        return WebsiteSettings::where('id', 1)->value('eligibility_cooldown') ?? 90;
+    }
+
+    /**
+     * Log an activity action (ADDED, EDIT, DELETE)
+     */
+    private function logActivity(Request $request, string $action, string $uuid, string $changes = ''): void
+    {
+        ActivityLog::create([
+            'performed_by' => $request->input('performed_by') ?? 'Unknown',
+            'action'       => $action,
+            'target'         => $uuid,
+            'changes'      => $changes,
+        ]);
     }
 
     private function syncPatientSectors(int $patientId, $sectorIdsJson): void
@@ -61,17 +75,14 @@ class PatientController extends Controller
             return null;
         }
 
-        // Remove all non-digit characters
         $cleaned = preg_replace('/\D/', '', $phoneNumber);
 
-        // Convert 63 prefix to 09
         if (substr($cleaned, 0, 2) === '63') {
             $cleaned = '0' . substr($cleaned, 2);
         }
 
-        // Validate: must start with 09 and be exactly 11 digits
         if (substr($cleaned, 0, 2) !== '09' || strlen($cleaned) !== 11) {
-            return null; // Invalid format
+            return null;
         }
 
         return $cleaned;
@@ -85,7 +96,6 @@ class PatientController extends Controller
             $patientID = $request->input('patient_id');
             $updatePatientInfo = $request->boolean('update_patient_info');
 
-            // Normalize and validate phone number
             $phoneNumber = $this->normalizePhoneNumber($request->input('phone_number'));
 
             if ($request->filled('phone_number') && $phoneNumber === null) {
@@ -95,7 +105,6 @@ class PatientController extends Controller
             }
 
             if ($patientID == null) {
-                // Create new patient
                 $patient = PatientList::create([
                     'lastname'      => $request->input('lastname'),
                     'firstname'     => $request->input('firstname'),
@@ -112,7 +121,6 @@ class PatientController extends Controller
                 ]);
                 $patientID = $patient->patient_id;
             } elseif ($updatePatientInfo) {
-                // Update existing patient info
                 $patient = PatientList::where('patient_id', $patientID)->firstOrFail();
                 $patient->update([
                     'lastname'      => $request->input('lastname'),
@@ -130,7 +138,6 @@ class PatientController extends Controller
                 ]);
             }
 
-            // Sync sectors if provided
             if ($request->filled('sector_ids')) {
                 $this->syncPatientSectors($patientID, $request->input('sector_ids'));
             }
@@ -152,7 +159,7 @@ class PatientController extends Controller
 
             if (!$request->boolean('is_checked')) {
                 ClientName::create([
-                    'uuid'         => $patientHistory->uuid, // Changed from gl_no
+                    'uuid'         => $patientHistory->uuid,
                     'lastname'     => $request->input('client_lastname'),
                     'firstname'    => $request->input('client_firstname'),
                     'middlename'   => $nullify($request->input('client_middlename')),
@@ -161,9 +168,17 @@ class PatientController extends Controller
                 ]);
             }
 
-            // Return both uuid and gl_no in the response
+            // Log ADDED action
+            $formattedAmount = '₱' . number_format((float)$patientHistory->issued_amount, 2);
+            $this->logActivity(
+                $request,
+                'ADDED',
+                $patientHistory->uuid,
+                "GL No: {$patientHistory->gl_no} | Category: {$patientHistory->category} | Amount: {$formattedAmount} | Date: {$patientHistory->date_issued}"
+            );
+
             return response()->json([
-                'uuid' => $patientHistory->uuid,
+                'uuid'  => $patientHistory->uuid,
                 'gl_no' => $patientHistory->gl_no
             ]);
         });
@@ -185,8 +200,8 @@ class PatientController extends Controller
                 'patient_list.firstname',
                 'patient_list.middlename',
                 'patient_list.suffix',
-                DB::raw('GROUP_CONCAT(patient_history.uuid) as uuids'), // Changed from gl_numbers
-                DB::raw('GROUP_CONCAT(patient_history.gl_no) as gl_numbers') // Keep for display
+                DB::raw('GROUP_CONCAT(patient_history.uuid) as uuids'),
+                DB::raw('GROUP_CONCAT(patient_history.gl_no) as gl_numbers')
             )
             ->groupBy('patient_list.patient_id', 'patient_list.lastname', 'patient_list.firstname', 'patient_list.middlename', 'patient_list.suffix')
             ->get();
@@ -212,14 +227,12 @@ class PatientController extends Controller
                 'patient_history.gl_no',
                 'patient_history.date_issued'
             )
-            ->whereYear('patient_history.date_issued', $currentYear) // Only current year
-            ->orderBy('patient_history.gl_no', 'desc') // Latest GL first
+            ->whereYear('patient_history.date_issued', $currentYear)
+            ->orderBy('patient_history.gl_no', 'desc')
             ->get();
 
-        // Get all unique patient IDs
         $patientIds = $patientList->pluck('patient_id')->unique()->toArray();
 
-        // Fetch sector IDs for all patients in one query
         $patientSectors = DB::table('user_sectors')
             ->whereIn('patient_id', $patientIds)
             ->select('patient_id', 'sector_id')
@@ -229,7 +242,6 @@ class PatientController extends Controller
                 return $sectors->pluck('sector_id')->toArray();
             });
 
-        // Attach sector_ids to each result
         foreach ($patientList as $patient) {
             $patient->sector_ids = $patientSectors->get($patient->patient_id, []);
         }
@@ -260,7 +272,6 @@ class PatientController extends Controller
             )
             ->distinct();
 
-        // If no search term, show only current year
         if (!$search) {
             $results = $baseQuery
                 ->whereYear('patient_history.date_issued', $currentYear)
@@ -270,16 +281,11 @@ class PatientController extends Controller
             return $this->attachSectorIds($results);
         }
 
-        // If searching by UUID (starts with MAMS-), search all years
         $isUuidSearch = strpos($search, 'MAMS-') === 0;
-
-        // If it's a pure number and current year records exist with that GL, prioritize current year
         $isPureNumber = is_numeric($search);
-
         $searchNoComma = str_replace(',', '', $search);
 
         $query = $baseQuery->where(function ($q) use ($search, $searchNoComma, $isPureNumber, $currentYear) {
-            // Name searches (highest priority)
             $q->whereRaw(
                 "CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) = ?",
                 [$searchNoComma]
@@ -293,14 +299,12 @@ class PatientController extends Controller
                 ->orWhere('patient_list.middlename', 'LIKE', "%{$search}%")
                 ->orWhere('patient_list.suffix', 'LIKE', "%{$search}%");
 
-            // If it's a number, search GL number and only show exact match or current year results
             if ($isPureNumber) {
                 $q->orWhere(function ($subQ) use ($search, $currentYear) {
                     $subQ->where('patient_history.gl_no', '=', $search)
                         ->whereYear('patient_history.date_issued', $currentYear);
                 });
             } else {
-                // For non-numeric searches, include other fields
                 $q->orWhere('patient_list.barangay', 'LIKE', "%{$search}%")
                     ->orWhere('patient_history.category', 'LIKE', "%{$search}%")
                     ->orWhere('patient_history.uuid', 'LIKE', "%{$search}%")
@@ -317,7 +321,7 @@ class PatientController extends Controller
                 WHEN CONCAT_WS(' ', patient_list.lastname, patient_list.firstname, patient_list.middlename, patient_list.suffix) LIKE ? THEN 3
                 WHEN patient_history.category = ? THEN 4
                 WHEN patient_history.uuid = ? THEN 5
-                WHEN patient_history.date_issued    LIKE ? THEN 6
+                WHEN patient_history.date_issued LIKE ? THEN 6
                 WHEN sectors.sector LIKE ? THEN 7
                 ELSE 8
             END
@@ -332,8 +336,6 @@ class PatientController extends Controller
 
     public function getPatientDetails($identifier)
     {
-        // Try to determine if identifier is UUID or gl_no
-        // UUID format: MAMS-YYYY-MM-DD-NNNN
         $isUuid = strpos($identifier, 'MAMS-') === 0;
 
         $query = DB::table('patient_history')
@@ -347,20 +349,15 @@ class PatientController extends Controller
         }
 
         $row = $query->select(
-            // History info
             'patient_history.uuid',
             'patient_history.gl_no',
             'patient_history.category',
             'patient_history.date_issued',
-
-            // Patient name
             'patient_list.patient_id',
             'patient_list.lastname as patient_lastname',
             'patient_list.firstname as patient_firstname',
             'patient_list.middlename as patient_middlename',
             'patient_list.suffix as patient_suffix',
-
-            // Patient details from patient_list
             'patient_list.birthdate',
             'patient_list.sex',
             'patient_list.preference',
@@ -369,14 +366,10 @@ class PatientController extends Controller
             'patient_list.barangay',
             'patient_list.house_address',
             'patient_list.phone_number',
-
-            // Patient history details
             'patient_history.partner',
             'patient_history.hospital_bill',
             'patient_history.issued_amount',
             'patient_history.issued_by',
-
-            // Client info (optional)
             'client_name.lastname as client_lastname',
             'client_name.firstname as client_firstname',
             'client_name.middlename as client_middlename',
@@ -397,7 +390,6 @@ class PatientController extends Controller
 
     public function getPatientHistory($identifier)
     {
-        // Try to determine if identifier is UUID or gl_no
         $isUuid = strpos($identifier, 'MAMS-') === 0;
 
         $query = DB::table('patient_history');
@@ -408,21 +400,17 @@ class PatientController extends Controller
             $query->where('gl_no', $identifier);
         }
 
-        // 1. Get the current record
         $current = $query->select('patient_id', 'date_issued')->first();
 
         if (!$current) {
             return response()->json(['message' => 'Record not found'], 404);
         }
 
-        // 2. Get eligibility cooldown from settings
         $cooldownDays = $this->getEligibilityCooldownDays();
 
-        // 3. Compute eligibility date (cooldown days after date_issued)
         $eligibilityDate = Carbon::parse($current->date_issued)
             ->addDays($cooldownDays);
 
-        // 4. Get ALL history for this patient via patient_id
         $history = DB::table('patient_history')
             ->where('patient_id', $current->patient_id)
             ->select(
@@ -438,19 +426,17 @@ class PatientController extends Controller
 
         return response()->json([
             'eligibility_date' => $eligibilityDate->toDateString(),
-            'history' => $history
+            'history'          => $history
         ]);
     }
-
     public function updatePatientDetails(Request $request)
     {
         return DB::transaction(function () use ($request) {
             $nullify = fn($value) => ($value === '' || $value === 'null' || strtolower($value) === 'n/a') ? null : $value;
 
-            $identifier = $request->input('identifier'); // Can be UUID or gl_no
+            $identifier = $request->input('identifier');
             $isUuid = strpos($identifier, 'MAMS-') === 0;
 
-            // Normalize and validate phone number
             $phoneNumber = $this->normalizePhoneNumber($request->input('phone_number'));
 
             if ($request->filled('phone_number') && $phoneNumber === null) {
@@ -459,16 +445,18 @@ class PatientController extends Controller
                 ], 422);
             }
 
-            // Get the history record (transaction)
             if ($isUuid) {
                 $history = PatientHistory::where('uuid', $identifier)->firstOrFail();
             } else {
                 $history = PatientHistory::where('gl_no', $identifier)->firstOrFail();
             }
 
-            // CASE 1: Update ONLY transaction details (don't touch patient_list)
+            // Snapshot of original history values for change tracking
+            $originalHistory = $history->toArray();
+            $originalPatient = null;
+
+            // CASE 1: Update ONLY transaction details
             if ($request->has('update_transaction_only') && $request->input('update_transaction_only') == '1') {
-                // Normalize hospital bill
                 $hospitalBillInput = $request->input('hospital_bill');
                 $hospitalBill = (is_null($hospitalBillInput) || $hospitalBillInput === '' ||
                     strtolower($hospitalBillInput) === 'null' ||
@@ -476,7 +464,6 @@ class PatientController extends Controller
                     ? null
                     : (float) $hospitalBillInput;
 
-                // Prepare update data
                 $updateData = [
                     'category'      => $request->input('category'),
                     'partner'       => $nullify($request->input('partner')),
@@ -488,25 +475,21 @@ class PatientController extends Controller
                     $updateData['gl_no'] = $request->input('gl_no');
                 }
 
-                // If issued_by is provided (admin edit), include it
                 if ($request->has('issued_by')) {
                     $updateData['issued_by'] = $nullify($request->input('issued_by'));
                 }
 
-                // If date_issued is provided (admin edit), include it
                 if ($request->has('date_issued')) {
                     $updateData['date_issued'] = $nullify($request->input('date_issued'));
                 }
 
-                // Update only history-specific details
                 $history->update($updateData);
 
-                // Handle CLIENT (per-history record)
                 $isChecked = $request->boolean('is_checked');
 
                 if (!$isChecked) {
                     ClientName::updateOrCreate(
-                        ['uuid' => $history->uuid], // Changed from gl_no
+                        ['uuid' => $history->uuid],
                         [
                             'lastname'     => $request->input('client_lastname'),
                             'firstname'    => $request->input('client_firstname'),
@@ -519,10 +502,28 @@ class PatientController extends Controller
                     ClientName::where('uuid', $history->uuid)->delete();
                 }
 
-                // Sync sectors if provided
-                if ($request->filled('sector_ids')) {
+                if ($request->has('sector_ids')) {
                     $this->syncPatientSectors($history->patient_id, $request->input('sector_ids'));
                 }
+                $changedFields = [];
+                foreach ($updateData as $key => $newVal) {
+                    $oldVal = $originalHistory[$key] ?? null;
+                    $normalize = fn($v) => (is_null($v) || $v === '') ? null : $v;
+                    if ($normalize($oldVal) != $normalize($newVal)) {
+                        $formatVal = function ($v, $k) {
+                            if (in_array($k, ['issued_amount', 'hospital_bill']) && is_numeric($v) && $v !== null) {
+                                return '₱' . number_format((float)$v, 2);
+                            }
+                            return $v ?? 'N/A';
+                        };
+                        $changedFields[] = "{$key}: '{$formatVal($oldVal,$key)}' → '{$formatVal($newVal,$key)}'";
+                    }
+                }
+
+                $changesStr = count($changedFields) > 0
+                    ? implode(' | ', $changedFields)
+                    : 'No changes detected';
+                $this->logActivity($request, 'EDIT', $history->uuid, $changesStr);
 
                 return response()->json(['success' => true]);
             }
@@ -544,16 +545,17 @@ class PatientController extends Controller
                     'phone_number'  => $phoneNumber,
                 ]);
 
-                // Update this history record to use the new patient_id
                 $history->patient_id = $newPatient->patient_id;
             }
             // CASE 3: Use existing patient
             elseif ($request->has('use_existing_patient_id')) {
                 $history->patient_id = $request->input('use_existing_patient_id');
             }
-            // CASE 4: Update existing patient (affects all records with this patient_id)
+            // CASE 4: Update existing patient — snapshot BEFORE update, then track changes
             else {
                 $patient = PatientList::where('patient_id', $history->patient_id)->firstOrFail();
+                $originalPatient = $patient->toArray(); // snapshot before update
+
                 $patient->update([
                     'lastname'      => $request->input('lastname'),
                     'firstname'     => $request->input('firstname'),
@@ -570,7 +572,6 @@ class PatientController extends Controller
                 ]);
             }
 
-            // For cases 2, 3, 4: Update transaction details too
             $hospitalBillInput = $request->input('hospital_bill');
             $hospitalBill = (is_null($hospitalBillInput) || $hospitalBillInput === '' ||
                 strtolower($hospitalBillInput) === 'null' ||
@@ -578,7 +579,6 @@ class PatientController extends Controller
                 ? null
                 : (float) $hospitalBillInput;
 
-            // Prepare update data
             $updateData = [
                 'category'      => $request->input('category'),
                 'partner'       => $nullify($request->input('partner')),
@@ -587,20 +587,17 @@ class PatientController extends Controller
                 'issued_by'     => $nullify($request->input('issued_by')),
             ];
 
-            // If date_issued is provided (admin edit), include it
             if ($request->has('date_issued')) {
                 $updateData['date_issued'] = $nullify($request->input('date_issued'));
             }
 
-            // Update history-specific details
             $history->update($updateData);
 
-            // Handle CLIENT (per-history record)
             $isChecked = $request->boolean('is_checked');
 
             if (!$isChecked) {
                 ClientName::updateOrCreate(
-                    ['uuid' => $history->uuid], // Changed from gl_no
+                    ['uuid' => $history->uuid],
                     [
                         'lastname'     => $request->input('client_lastname'),
                         'firstname'    => $request->input('client_firstname'),
@@ -613,11 +610,65 @@ class PatientController extends Controller
                 ClientName::where('uuid', $history->uuid)->delete();
             }
 
-            // Sync sectors if provided
-            if ($request->filled('sector_ids')) {
-                $currentPatientId = $history->patient_id;
-                $this->syncPatientSectors($currentPatientId, $request->input('sector_ids'));
+            if ($request->has('sector_ids')) {
+                $this->syncPatientSectors($history->patient_id, $request->input('sector_ids'));
             }
+
+            // --- Build changed fields list ---
+            $changedFields = [];
+            $normalize = fn($v) => (is_null($v) || $v === '') ? null : $v;
+            $formatVal = function ($v, $k) {
+                if (in_array($k, ['issued_amount', 'hospital_bill']) && is_numeric($v) && $v !== null) {
+                    return '₱' . number_format((float)$v, 2);
+                }
+                return $v ?? 'N/A';
+            };
+
+            // Diff history/transaction fields
+            foreach ($updateData as $key => $newVal) {
+                $oldVal = $originalHistory[$key] ?? null;
+                if ($normalize($oldVal) != $normalize($newVal)) {
+                    $changedFields[] = "{$key}: '{$formatVal($oldVal,$key)}' → '{$formatVal($newVal,$key)}'";
+                }
+            }
+
+            // Diff patient info fields (CASE 4 only)
+            if ($originalPatient !== null) {
+                $newPatientData = [
+                    'lastname'      => $request->input('lastname'),
+                    'firstname'     => $request->input('firstname'),
+                    'middlename'    => $nullify($request->input('middlename')),
+                    'suffix'        => $nullify($request->input('suffix')),
+                    'birthdate'     => $nullify($request->input('birthdate')),
+                    'sex'           => $nullify($request->input('sex')),
+                    'preference'    => $nullify($request->input('preference')),
+                    'barangay'      => $nullify($request->input('barangay')),
+                    'house_address' => $nullify($request->input('house_address')),
+                    'phone_number'  => $phoneNumber,
+                ];
+
+                foreach ($newPatientData as $key => $newVal) {
+                    $oldVal = $originalPatient[$key] ?? null;
+
+                    // Normalize birthdate to Y-m-d on both sides before comparing
+                    // to avoid false positives from format differences (DB: Y-m-d, request: Y-m-d)
+                    if ($key === 'birthdate' && $normalize($oldVal) !== null && $normalize($newVal) !== null) {
+                        $oldVal = \Carbon\Carbon::parse($oldVal)->format('Y-m-d');
+                        $newVal = \Carbon\Carbon::parse($newVal)->format('Y-m-d');
+                    }
+
+                    if ($normalize($oldVal) != $normalize($newVal)) {
+                        $displayOld = $originalPatient[$key] ?? 'N/A';
+                        $displayNew = $newPatientData[$key] ?? 'N/A';
+                        $changedFields[] = "{$key}: '{$displayOld}' → '{$displayNew}'";
+                    }
+                }
+            }
+
+            $changesStr = count($changedFields) > 0
+                ? implode(' | ', $changedFields)
+                : 'No changes detected';
+            $this->logActivity($request, 'EDIT', $history->uuid, $changesStr);
 
             return response()->json(['success' => true]);
         });
@@ -655,23 +706,35 @@ class PatientController extends Controller
         return response()->json(['success' => true]);
     }
 
-    public function deleteLetter($identifier)
+    // Note: $request added as first param so performed_by can be read from the request body
+    public function deleteLetter(Request $request, $identifier)
     {
-        // Try to determine if identifier is UUID or gl_no
         $isUuid = strpos($identifier, 'MAMS-') === 0;
 
         if ($isUuid) {
-            $patient = PatientHistory::where('uuid', $identifier)->firstOrFail()->delete();
+            $history = PatientHistory::where('uuid', $identifier)->firstOrFail();
         } else {
-            $patient = PatientHistory::where('gl_no', $identifier)->firstOrFail()->delete();
+            $history = PatientHistory::where('gl_no', $identifier)->firstOrFail();
         }
+
+        $uuid = $history->uuid;
+        $gl_no = $history->gl_no;
+
+        $history->delete();
+
+        // Log DELETE action
+        $this->logActivity(
+            $request,
+            'DELETE',
+            $uuid,
+            "GL No: {$gl_no} has been deleted"
+        );
 
         return response()->json(['success' => true]);
     }
 
     public function checkEligibility(Request $request)
     {
-        // Find matching patient
         $patient = DB::table('patient_list')
             ->where('lastname', $request->input('lastname'))
             ->where('firstname', $request->input('firstname'))
@@ -683,7 +746,6 @@ class PatientController extends Controller
             return response()->json(['eligible' => true]);
         }
 
-        // Get the most recent record for this patient
         $latestRecord = DB::table('patient_history')
             ->where('patient_id', $patient->patient_id)
             ->orderBy('date_issued', 'desc')
@@ -693,32 +755,27 @@ class PatientController extends Controller
             return response()->json(['eligible' => true]);
         }
 
-        // Get eligibility cooldown from settings
         $cooldownDays = $this->getEligibilityCooldownDays();
 
-        // Calculate eligibility date (cooldown days after last date_issued)
-        // Use startOfDay to ignore time component
         $eligibilityDate = Carbon::parse($latestRecord->date_issued)
             ->startOfDay()
             ->addDays($cooldownDays);
 
         $today = Carbon::today()->startOfDay();
 
-        // Check if eligible
         if ($today->greaterThanOrEqualTo($eligibilityDate)) {
             return response()->json(['eligible' => true]);
         }
 
-        // Not eligible yet - calculate days remaining
         $daysRemaining = $today->diffInDays($eligibilityDate);
 
         return response()->json([
-            'eligible' => false,
-            'uuid' => $latestRecord->uuid, // Added UUID
-            'last_gl_no' => $latestRecord->gl_no,
-            'last_issued_at' => $latestRecord->date_issued,
+            'eligible'         => false,
+            'uuid'             => $latestRecord->uuid,
+            'last_gl_no'       => $latestRecord->gl_no,
+            'last_issued_at'   => $latestRecord->date_issued,
             'eligibility_date' => $eligibilityDate->toDateString(),
-            'days_remaining' => $daysRemaining
+            'days_remaining'   => $daysRemaining
         ]);
     }
 
@@ -730,7 +787,6 @@ class PatientController extends Controller
             return response()->json(['eligible' => true]);
         }
 
-        // Get the most recent record for this patient
         $latestRecord = DB::table('patient_history')
             ->where('patient_id', $patientId)
             ->orderBy('date_issued', 'desc')
@@ -740,41 +796,34 @@ class PatientController extends Controller
             return response()->json(['eligible' => true]);
         }
 
-        // Get eligibility cooldown from settings
         $cooldownDays = $this->getEligibilityCooldownDays();
 
-        // Calculate eligibility date (cooldown days after last date_issued)
-        // Use startOfDay to ignore time component
         $eligibilityDate = Carbon::parse($latestRecord->date_issued)
             ->startOfDay()
             ->addDays($cooldownDays);
 
         $today = Carbon::today()->startOfDay();
 
-        // Check if eligible
         if ($today->greaterThanOrEqualTo($eligibilityDate)) {
             return response()->json(['eligible' => true]);
         }
 
-        // Not eligible yet - calculate days remaining
         $daysRemaining = $today->diffInDays($eligibilityDate);
 
         return response()->json([
-            'eligible' => false,
-            'uuid' => $latestRecord->uuid, // Added UUID
-            'last_gl_no' => $latestRecord->gl_no,
-            'last_issued_at' => $latestRecord->date_issued,
+            'eligible'         => false,
+            'uuid'             => $latestRecord->uuid,
+            'last_gl_no'       => $latestRecord->gl_no,
+            'last_issued_at'   => $latestRecord->date_issued,
             'eligibility_date' => $eligibilityDate->toDateString(),
-            'days_remaining' => $daysRemaining
+            'days_remaining'   => $daysRemaining
         ]);
     }
 
     public function getAllPatientsWithEligibility()
     {
-        // Get eligibility cooldown from settings
         $cooldownDays = $this->getEligibilityCooldownDays();
 
-        // Get all unique patients with their most recent record
         $patients = DB::table('patient_list')
             ->leftJoin('patient_history', function ($join) {
                 $join->on('patient_list.patient_id', '=', 'patient_history.patient_id')
@@ -807,7 +856,6 @@ class PatientController extends Controller
 
         $today = Carbon::today()->startOfDay();
 
-        // Pre-fetch all sector mappings in one query to avoid N+1
         $allSectorMappings = DB::table('user_sectors')
             ->select('patient_id', 'sector_id')
             ->get()
