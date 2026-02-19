@@ -18,7 +18,7 @@ class AuthController extends Controller
         ActivityLog::create([
             'performed_by' => $username,
             'action'       => $action,
-            'target'       => 'LOGIN PAGE',
+            'target'       => 'AUTH',
             'changes'      => $changes,
         ]);
     }
@@ -66,8 +66,8 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
-        // Capture username and log BEFORE session is touched
-        $username = Auth::user()?->USERNAME ?? 'Unknown';
+        // Prefer username from request body; fall back to session-based Auth::user()
+        $username = $request->input('username') ?? Auth::user()?->USERNAME ?? 'Unknown';
         $this->logActivity('LOGOUT', $username, 'Logged out');
 
         Auth::logout();
