@@ -18,7 +18,7 @@ class AuthController extends Controller
         ActivityLog::create([
             'performed_by' => $username,
             'action'       => $action,
-            'target'       => 'AUTH',
+            'target'       => 'LOGIN PAGE',
             'changes'      => $changes,
         ]);
     }
