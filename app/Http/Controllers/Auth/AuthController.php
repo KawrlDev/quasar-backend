@@ -3,12 +3,26 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
+    /**
+     * Log an auth activity action (LOGIN, LOGOUT)
+     */
+    private function logActivity(string $action, string $username, string $changes = ''): void
+    {
+        ActivityLog::create([
+            'performed_by' => $username,
+            'action'       => $action,
+            'target'       => 'LOGIN PAGE',
+            'changes'      => $changes,
+        ]);
+    }
+
     public function login(Request $request)
     {
         $request->validate([
@@ -19,7 +33,7 @@ class AuthController extends Controller
         $remember = $request->boolean('remember');
 
         if (!Auth::attempt([
-            'USERNAME' => $request->username, 
+            'USERNAME' => $request->username,
             'password' => $request->password
         ], $remember)) {
             throw ValidationException::withMessages([
@@ -28,24 +42,34 @@ class AuthController extends Controller
         }
 
         $request->session()->regenerate();
-        
+
         // Set different session lifetime based on remember me
         if ($remember) {
-            // Remember for 30 days
             config(['session.lifetime' => 43200]); // 30 days in minutes
         } else {
-            // Short session - 2 hours
-            config(['session.lifetime' => 120]);
+            config(['session.lifetime' => 120]); // 2 hours
         }
+
+        $user = Auth::user();
+
+        $this->logActivity(
+            'LOGIN',
+            $user->USERNAME,
+            'Logged in' . ($remember ? ' with Remember Me' : '')
+        );
 
         return response()->json([
             'message' => 'Logged in successfully',
-            'user' => Auth::user()
+            'user'    => $user
         ]);
     }
 
     public function logout(Request $request)
     {
+        // Capture username and log BEFORE session is touched
+        $username = Auth::user()?->USERNAME ?? 'Unknown';
+        $this->logActivity('LOGOUT', $username, 'Logged out');
+
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();
@@ -55,11 +79,10 @@ class AuthController extends Controller
 
     public function user(Request $request)
     {
-        // Return 401 if not authenticated
         if (!Auth::check()) {
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
-        
+
         return response()->json(Auth::user());
     }
 }
