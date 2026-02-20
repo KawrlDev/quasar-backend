@@ -5,7 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 
-class GlSequence extends Model
+class GLSequence extends Model
 {
     protected $table = 'gl_sequences';
     
